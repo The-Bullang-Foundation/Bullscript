@@ -1,6 +1,5 @@
 mod modes;
 
-use std::io::{self, Write};
 
 const BANNER: &str = "\n\
   ____        _ _                _       _\n\
@@ -19,19 +18,19 @@ Type 'help' for available commands.\n\
 fn main() {
     println!("{}", BANNER);
 
+    let mut rl = rustyline::DefaultEditor::new()
+        .expect("failed to initialise line editor");
+
     loop {
-        print!("command -> ");
-        io::stdout().flush().unwrap();
-
-        let mut line = String::new();
-        match io::stdin().read_line(&mut line) {
-            Ok(0) => { println!("\nGoodbye."); break; }
-            Ok(_) => {}
+        let line = match rl.readline("command -> ") {
+            Ok(l)                                            => l,
+            Err(rustyline::error::ReadlineError::Eof)        => { println!("Goodbye."); break; }
+            Err(rustyline::error::ReadlineError::Interrupted) => continue,
             Err(e) => { eprintln!("Read error: {}", e); break; }
-        }
-
+        };
         let line = line.trim();
         if line.is_empty() { continue; }
+        let _ = rl.add_history_entry(line);
 
         // Split into at most 4 parts so output_file path is kept whole
         let parts: Vec<&str> = line.splitn(4, ' ').collect();
