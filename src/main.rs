@@ -1,19 +1,19 @@
 mod modes;
 
 
-const BANNER: &str = "\n\
-  ____        _ _                _       _\n\
- |  _ \\      | | |              (_)     | |\n\
- | |_) |_   _| | |___  ___ _ __ _ _ __ | |_\n\
- |  _ <| | | | | / __|/ __| '__| | '_ \\| __|\n\
- | |_) | |_| | | \\__ \\ (__| |  | | |_) | |_\n\
- |____/ \\__,_|_|_|___/\\___|_|  |_| .__/ \\__|\n\
-                                  | |\n\
-                                  |_|\n\
-\n\
-Bullscript 1.0.0 — interactive Bullang tool\n\
-Type 'help' for available commands.\n\
-";
+const BANNER: &str = r#"
+ ____        _ _               _       _
+|  _ \      | | |             (_)     | |
+| |_) |_   _| | |___  ___ _ __ _ _ __ | |_
+|  _ <| | | | | / __|/ __| '__| | '_ \| __|
+| |_) | |_| | | \__ \ (__| |  | | |_) | |_
+|____/ \__,_|_|_|___/\___|_|  |_| .__/ \__|
+                                | |
+                                |_|
+
+Bullscript 1.0.0 — interactive Bullang tool
+Type 'help' for available commands.
+"#;
 
 fn main() {
     println!("{}", BANNER);
