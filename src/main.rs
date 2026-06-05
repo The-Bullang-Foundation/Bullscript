@@ -16,7 +16,23 @@ Type 'help' for available commands.
 "#;
 
 fn main() {
+	let update_handle = std::thread::spawn(|| {
+		let remote = modes::remote_head(modes::REPO, "main")?;
+		let installed = modes::installed_hash("bullarch", modes::REPO, "main")?;
+		if installed == remote {
+			None
+		} else {
+			Some(format!(
+				"\nA new version of bullarchy is available. Run `bullarchy update` to install."
+			))
+		}
+	});
+
     println!("{}", BANNER);
+
+	if let Ok(Some(msg)) = update_handle.join() {
+    println!("{}", msg);
+	}
 
     let mut rl = rustyline::DefaultEditor::new()
         .expect("failed to initialise line editor");
