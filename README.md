@@ -37,6 +37,13 @@ Launches the interactive prompt:
 ```
 command ->
 ```
+### `update`
+
+Reinstall Bullscript from the latest commit on the main branch.
+
+```bash
+bullscript update
+```
 
 ---
 
@@ -149,16 +156,6 @@ Examples:
 command -> arrow ./gen_input ./my_program result.txt
 command -> arrow ./my_program input.txt result.txt
 command -> arrow add_tester ./add result.txt
-```
-
----
-
-### `update`
-
-Reinstall Bullscript from the latest commit on the main branch.
-
-```
-command -> update
 ```
 
 ---

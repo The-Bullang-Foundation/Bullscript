@@ -1,15 +1,16 @@
 use std::process::Command;
+use std::process;
 
 pub const REPO: &str = "https://github.com/My-sidequests/Bullscript.git";
 
-pub fn run() {
+pub fn cmd_update() {
     println!("Updating Bullscript...");
 
     let remote = match remote_head(REPO, "main") {
         Some(h) => h,
         None => {
             eprintln!("Could not reach repository. Check your internet connection.");
-            return;
+            process::exit(1);
         }
     };
 
@@ -17,7 +18,7 @@ pub fn run() {
 
 	if installed.map_or(false, |h| h == remote) {
         println!("Already up to date (commit: {}).", &remote[..8]);
-        return;
+        process::exit(0);
     }
 
     let status = Command::new("cargo")
@@ -29,6 +30,7 @@ pub fn run() {
         Ok(s)  => eprintln!("cargo install exited with {}.", s),
         Err(e) => eprintln!("Failed to run cargo: {}.", e),
     }
+	process::exit(0);
 }
 
 /// Fetch the HEAD commit hash of `branch` from a remote git repository.
