@@ -1,22 +1,38 @@
 mod modes;
 
 
-const BANNER: &str = "\n\
-  ____        _ _                _       _\n\
- |  _ \\      | | |              (_)     | |\n\
- | |_) |_   _| | |___  ___ _ __ _ _ __ | |_\n\
- |  _ <| | | | | / __|/ __| '__| | '_ \\| __|\n\
- | |_) | |_| | | \\__ \\ (__| |  | | |_) | |_\n\
- |____/ \\__,_|_|_|___/\\___|_|  |_| .__/ \\__|\n\
-                                  | |\n\
-                                  |_|\n\
-\n\
-Bullscript 1.0.0 — interactive Bullang tool\n\
-Type 'help' for available commands.\n\
-";
+const BANNER: &str = r#"
+ ____        _ _               _       _
+|  _ \      | | |             (_)     | |
+| |_) |_   _| | |___  ___ _ __ _ _ __ | |_
+|  _ <| | | | | / __|/ __| '__| | '_ \| __|
+| |_) | |_| | | \__ \ (__| |  | | |_) | |_
+|____/ \__,_|_|_|___/\___|_|  |_| .__/ \__|
+                                | |
+                                |_|
+
+Bullscript 1.0.0 — interactive Bullang tool
+Type 'help' for available commands.
+"#;
 
 fn main() {
+	let update_handle = std::thread::spawn(|| {
+		let remote = modes::remote_head(modes::REPO, "main")?;
+		let installed = modes::installed_hash("bullarch", modes::REPO, "main")?;
+		if installed == remote {
+			None
+		} else {
+			Some(format!(
+				"\nA new version of bullarchy is available. Run `bullarchy update` to install."
+			))
+		}
+	});
+
     println!("{}", BANNER);
+
+	if let Ok(Some(msg)) = update_handle.join() {
+    println!("{}", msg);
+	}
 
     let mut rl = rustyline::DefaultEditor::new()
         .expect("failed to initialise line editor");

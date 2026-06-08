@@ -1,6 +1,6 @@
 use std::process::Command;
 
-const REPO: &str = "https://github.com/My-sidequests/Bullscript.git";
+pub const REPO: &str = "https://github.com/My-sidequests/Bullscript.git";
 
 pub fn run() {
     println!("Updating Bullscript...");
@@ -15,7 +15,7 @@ pub fn run() {
 
     let installed = installed_hash("bullscript", REPO, "main");
 
-    if installed.map_or(false, |h| remote.starts_with(&h)) {
+	if installed.map_or(false, |h| h == remote) {
         println!("Already up to date (commit: {}).", &remote[..8]);
         return;
     }
@@ -34,7 +34,7 @@ pub fn run() {
 /// Fetch the HEAD commit hash of `branch` from a remote git repository.
 /// Returns the full 40-character SHA, or None if git is unavailable or the
 /// repo cannot be reached.
-fn remote_head(repo: &str, branch: &str) -> Option<String> {
+pub fn remote_head(repo: &str, branch: &str) -> Option<String> {
     let output = Command::new("git")
         .args(["ls-remote", repo, &format!("refs/heads/{}", branch)])
         .output()
@@ -48,30 +48,32 @@ fn remote_head(repo: &str, branch: &str) -> Option<String> {
 /// Read the commit hash for `package` as recorded in ~/.cargo/.crates2.json.
 /// Returns the short hash stored by cargo (e.g. "aaec925f"), or None if not
 /// found or the file cannot be parsed.
-fn installed_hash(package: &str, repo: &str, branch: &str) -> Option<String> {
-    let cargo_home = std::env::var("CARGO_HOME")
+pub fn installed_hash(package: &str, repo: &str, branch: &str) -> Option<String> {
+    let cargo_home = std::env::var("CARGO_installed_hashHOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
             let home = std::env::var("HOME").unwrap_or_default();
             std::path::PathBuf::from(home).join(".cargo")
         });
 
-    let crates2 = std::fs::read_to_string(cargo_home.join(".crates2.json")).ok()?;
+    let content = std::fs::read_to_string(
+        cargo_home.join(".crates2.json")
+    ).ok()?;
 
-    let branch_tag = format!("branch={}", branch);
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let installs = json["installs"].as_object()?;
+
     let repo_fragment = repo.trim_end_matches(".git");
+    let branch_tag = format!("branch={}", branch);
 
-    for line in crates2.lines() {
-        if line.contains(package)
-            && line.contains(repo_fragment)
-            && line.contains(&branch_tag)
+    for key in installs.keys() {
+        if key.contains(package)
+            && key.contains(repo_fragment)
+            && key.contains(&branch_tag)
         {
-            if let Some(hash_start) = line.rfind('#') {
-                let rest = &line[hash_start + 1..];
-                if let Some(hash_end) = rest.find('"') {
-                    return Some(rest[..hash_end].to_string());
-                }
-            }
+            // key = "bullang 1.0.0 (git+...?branch=main#e61e4db6c4c8...)"
+            let hash = key.split('#').nth(1)?.trim_end_matches(')');
+            return Some(hash.to_string());
         }
     }
     None
