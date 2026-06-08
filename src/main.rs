@@ -1,5 +1,24 @@
 mod modes;
 
+use clap::{Parser as ClapParser, Subcommand};
+
+#[derive(ClapParser)]
+#[command(
+    name    = "bullang",
+    version = env!("CARGO_PKG_VERSION"),
+    about   = "Bullang — the language registry.\n\n\
+               Defines the .bu language: grammar, parser, AST, type system, and standard library.\n\
+               For transpiling, formatting, scaffolding, and LSP support, use bullarchy."
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+	Update,
+}
 
 const BANNER: &str = r#"
  ____        _ _               _       _
@@ -16,6 +35,12 @@ Type 'help' for available commands.
 "#;
 
 fn main() {
+	let cli = Cli::parse();
+
+	match cli.command {
+		Command::Update => modes::cmd_update(),
+	}
+
 	let update_handle = std::thread::spawn(|| {
 		let remote = modes::remote_head(modes::REPO, "main")?;
 		let installed = modes::installed_hash("bullarch", modes::REPO, "main")?;
@@ -72,9 +97,9 @@ fn main() {
                 }
             }
 
-            "update" => {
-                modes::update::run();
-            }
+            // "update" => {
+            //     modes::update::run();
+            // }
 
             "exit" => { println!("Goodbye."); break; }
 
