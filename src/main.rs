@@ -7,9 +7,8 @@ use clap::{Parser as ClapParser, Subcommand};
 #[command(
     name    = "bullscript",
     version = env!("CARGO_PKG_VERSION"),
-    about   = "Bullscript — the language registry.\n\n\
-               Defines the .bu language: grammar, parser, AST, type system, and standard library.\n\
-               For transpiling, formatting, scaffolding, and LSP support, use bullarchy."
+    about   = "Bullscript 1.0.0 — interactive Bullang tool\n
+				Type 'help' for available commands."
 )]
 struct Cli {
     #[command(subcommand)]
