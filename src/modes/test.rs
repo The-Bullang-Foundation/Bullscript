@@ -6,6 +6,7 @@
 //!   3. Input/output pairs until `conclude`
 //!   4. Tester name
 //!   5. Generates, compiles, and globally installs a Rust tester binary
+//!      (Java: compiles with javac and runs with java directly)
 
 use std::fs;
 use std::io::{self, Write};
@@ -21,6 +22,7 @@ enum Lang {
     C,
     Cpp,
     Go,
+    Java,
 }
 
 impl Lang {
@@ -31,6 +33,7 @@ impl Lang {
             "c"          => Some(Lang::C),
             "cpp" | "cc" => Some(Lang::Cpp),
             "go"         => Some(Lang::Go),
+            "java"       => Some(Lang::Java),
             _            => None,
         }
     }
@@ -42,6 +45,7 @@ impl Lang {
             Lang::C      => "C",
             Lang::Cpp    => "C++",
             Lang::Go     => "Go",
+            Lang::Java   => "Java",
         }
     }
 }
@@ -68,7 +72,7 @@ pub fn run() {
     let lang = match Lang::from_ext(ext) {
         Some(l) => l,
         None => {
-            eprintln!("  Unknown extension '.{}'. Supported: rs, py, c, cpp, go.", ext);
+            eprintln!("  Unknown extension '.{}'. Supported: rs, py, c, cpp, go, java.", ext);
             return;
         }
     };
@@ -108,7 +112,25 @@ pub fn run() {
     if tester_name.is_empty() { println!("  Aborted."); return; }
 
     // ── Step 5: generate, compile, install ───────────────────────────────────
-    let src = generate_tester(&filename, &fn_name, lang, &cases, &tester_name);
+    match lang {
+        Lang::Java => run_java_tester(&filename, &fn_name, &cases, &tester_name),
+        _          => run_rust_tester(&filename, &fn_name, lang, &cases, &tester_name),
+    }
+}
+
+// ── Rust-based tester (all non-Java backends) ─────────────────────────────────
+//
+// Generates a Rust subprocess harness, compiles it with `cargo install`,
+// and makes it available globally as `<tester_name>`.
+
+fn run_rust_tester(
+    filename:    &str,
+    fn_name:     &str,
+    lang:        Lang,
+    cases:       &[TestCase],
+    tester_name: &str,
+) {
+    let src = generate_rust_tester(filename, fn_name, lang, cases, tester_name);
 
     let tmp_dir = std::env::temp_dir().join(format!("bullscript_{}", tester_name));
     let src_dir = tmp_dir.join("src");
@@ -125,7 +147,7 @@ pub fn run() {
     println!("  Compiling tester...");
 
     let status = Command::new("cargo")
-        .args(["install", "--path", tmp_dir.to_str().unwrap(), "--name", &tester_name])
+        .args(["install", "--path", tmp_dir.to_str().unwrap(), "--name", tester_name])
         .status();
 
     match status {
@@ -140,9 +162,70 @@ pub fn run() {
     let _ = fs::remove_dir_all(&tmp_dir);
 }
 
+// ── Java tester ───────────────────────────────────────────────────────────────
+//
+// Generates a Java runner class, compiles it with `javac`, and runs it
+// immediately — no global install step, since Java binaries aren't
+// self-contained executables the way Rust ones are.
+
+fn run_java_tester(
+    filename:    &str,
+    fn_name:     &str,
+    cases:       &[TestCase],
+    tester_name: &str,
+) {
+    let src = generate_java_tester(filename, fn_name, cases, tester_name);
+
+    let tmp_dir   = std::env::temp_dir().join(format!("bullscript_{}", tester_name));
+    fs::create_dir_all(&tmp_dir).unwrap();
+
+    // Derive the class name from tester_name (PascalCase)
+    let class_name = to_pascal_case(tester_name);
+    let java_file  = tmp_dir.join(format!("{}.java", class_name));
+
+    fs::write(&java_file, &src).unwrap();
+
+    // Also copy the target .java file into the tmp dir so javac can see it
+    let target_class = to_pascal_case(
+        Path::new(filename)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Target")
+    );
+    if let Ok(target_src) = fs::read_to_string(filename) {
+        fs::write(tmp_dir.join(format!("{}.java", target_class)), target_src).unwrap();
+    }
+
+    println!("  Compiling tester with javac...");
+
+    let compile = Command::new("javac")
+        .arg(java_file.to_str().unwrap())
+        .arg(tmp_dir.join(format!("{}.java", target_class)).to_str().unwrap())
+        .current_dir(&tmp_dir)
+        .status();
+
+    match compile {
+        Ok(s) if s.success() => {
+            println!("  Running tester...\n");
+            let run = Command::new("java")
+                .arg(&class_name)
+                .current_dir(&tmp_dir)
+                .status();
+            match run {
+                Ok(_)  => {}
+                Err(e) => eprintln!("  Failed to run java: {}", e),
+            }
+        }
+        Ok(s)  => eprintln!("  javac failed (exit {}).", s),
+        Err(e) => eprintln!("  Failed to run javac: {}", e),
+    }
+
+    let _ = fs::remove_dir_all(&tmp_dir);
+}
+
 // ── Tester source generation ──────────────────────────────────────────────────
 
-fn generate_tester(
+fn generate_rust_tester(
     filename: &str,
     fn_name:  &str,
     lang:     Lang,
@@ -198,7 +281,89 @@ fn generate_tester(
     src
 }
 
-// ── Prompt helper ─────────────────────────────────────────────────────────────
+fn generate_java_tester(
+    filename: &str,
+    fn_name:  &str,
+    cases:    &[TestCase],
+    name:     &str,
+) -> String {
+    let class_name   = to_pascal_case(name);
+    let target_class = to_pascal_case(
+        Path::new(filename)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Target")
+    );
+
+    let mut src = String::new();
+
+    src.push_str(&format!(
+        "// Tester for `{}` in `{}` (Java), generated by bullscript test\n\n",
+        fn_name, filename
+    ));
+    src.push_str(&format!("public class {} {{\n\n", class_name));
+    src.push_str("    public static void main(String[] args) {\n");
+    src.push_str("        int passed = 0;\n");
+    src.push_str("        int failed = 0;\n\n");
+
+    // Each test case calls the static method directly.
+    // Inputs are parsed as long (most common Bullang numeric type).
+    // If the function takes a String, the user would have entered a string arg.
+    for (i, case) in cases.iter().enumerate() {
+        let inputs: Vec<&str> = case.input.split_whitespace().collect();
+        let args_java = inputs.iter().map(|a| {
+            // Heuristic: if it looks like a number pass as-is, else as a quoted String
+            if a.parse::<f64>().is_ok() {
+                a.to_string()
+            } else {
+                format!("\"{}\"", a)
+            }
+        }).collect::<Vec<_>>().join(", ");
+
+        src.push_str(&format!(
+            "        // test {i}\n"
+        ));
+        src.push_str(&format!(
+            "        var __actual{i} = String.valueOf({target}.{fn_name}({args}));\n",
+            i       = i,
+            target  = target_class,
+            fn_name = fn_name,
+            args    = args_java,
+        ));
+        src.push_str(&format!(
+            "        var __expected{i} = \"{expected}\";\n",
+            i        = i,
+            expected = case.expected.replace('"', "\\\""),
+        ));
+        src.push_str(&format!(
+            "        if (__actual{i}.equals(__expected{i})) {{\n"
+        ));
+        src.push_str(&format!(
+            "            System.out.println(\"  ok    {input} -> {expected}\");\n",
+            input    = case.input.replace('"', "\\\""),
+            expected = case.expected.replace('"', "\\\""),
+        ));
+        src.push_str("            passed++;\n");
+        src.push_str("        } else {\n");
+        src.push_str(&format!(
+            "            System.out.printf(\"  FAIL  {input} -> expected: {expected}, got: %s%n\", __actual{i});\n",
+            input    = case.input.replace('"', "\\\""),
+            expected = case.expected.replace('"', "\\\""),
+            i        = i,
+        ));
+        src.push_str("            failed++;\n");
+        src.push_str("        }\n\n");
+    }
+
+    src.push_str("        System.out.println();\n");
+    src.push_str("        System.out.printf(\"  %d passed, %d failed%n\", passed, failed);\n");
+    src.push_str("        if (failed > 0) System.exit(1);\n");
+    src.push_str("    }\n}\n");
+
+    src
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn ask(label: &str) -> String {
     print!("{}", label);
@@ -206,4 +371,20 @@ fn ask(label: &str) -> String {
     let mut buf = String::new();
     io::stdin().read_line(&mut buf).unwrap_or(0);
     buf.trim().to_string()
+}
+
+fn to_pascal_case(s: &str) -> String {
+    let mut result = String::new();
+    let mut upper  = true;
+    for ch in s.chars() {
+        if ch == '_' {
+            upper = true;
+        } else if upper {
+            result.extend(ch.to_uppercase());
+            upper = false;
+        } else {
+            result.push(ch);
+        }
+    }
+    result
 }
