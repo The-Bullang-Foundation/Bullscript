@@ -1,6 +1,6 @@
 # Bullscript
 
-Bullscript is the interactive writing and testing tool for [Bullang](https://github.com/My-sidequests/Bullang). It guides you through building `.bu` functions step by step and generating testers for compiled code.
+Bullscript is the interactive writing and testing tool for [Bullang](https://github.com/The-Bullang-Foundation/Bullang). It guides you through building `.bu` functions step by step and generating testers for compiled code.
 
 It depends on Bullang as a library crate and can be installed independently.
 
@@ -13,13 +13,13 @@ Cargo v1.92.0 or later.
 ## Installation
 
 ```bash
-cargo install --git https://github.com/My-sidequests/Bullscript.git
+cargo install --git https://github.com/The-Bullang-Foundation/Bullscript.git
 ```
 
 If you are reinstalling over an existing version, add `--force`:
 
 ```bash
-cargo install --git https://github.com/My-sidequests/Bullscript.git --force bullscript
+cargo install --git https://github.com/The-Bullang-Foundation/Bullscript.git --force bullscript
 ```
 
 After installation, `bullscript` is available from anywhere.
@@ -182,6 +182,6 @@ command -> exit
 
 ## Relationship to Bullang and Bullarchy
 
-**[Bullang](https://github.com/My-sidequests/Bullang)** is the language definition — grammar, AST, parser, formatter, and stdlib catalogue. Bullscript depends on it as a library crate. Run `bullang stdlib` to browse available builtins.
+**[Bullang](https://github.com/The-Bullang-Foundation/Bullang)** is the language definition — grammar, AST, parser, formatter, and stdlib catalogue. Bullscript depends on it as a library crate. Run `bullang stdlib` to browse available builtins.
 
-**[Bullarchy](https://github.com/My-sidequests/Bullarchy)** is the transpiler and project manager. Bullscript does not convert `.bu` to a target language — that is Bullarchy's role. The two tools complement each other: write and test with Bullscript, transpile and integrate with Bullarchy.
+**[Bullarchy](https://github.com/The-Bullang-Foundation/Bullarchy)** is the transpiler and project manager. Bullscript does not convert `.bu` to a target language — that is Bullarchy's role. The two tools complement each other: write and test with Bullscript, transpile and integrate with Bullarchy.

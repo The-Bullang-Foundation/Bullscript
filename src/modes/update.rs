@@ -1,7 +1,7 @@
 use std::process::Command;
 use std::process;
 
-pub const REPO: &str = "https://github.com/My-sidequests/Bullscript.git";
+pub const REPO: &str = "https://github.com/The-Bullang-Foundation/Bullscript.git";
 
 pub fn cmd_update() {
     println!("Updating Bullscript...");
