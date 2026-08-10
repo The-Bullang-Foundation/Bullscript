@@ -40,7 +40,7 @@
     "builtin": {
       "patterns": [
         {
-          "match": "\\b(builtin)(::)(add|capture|close|in|open|out|run|to_lower|to_upper|trim)\\b",
+          "match": "\\b(builtin)(::)(add|capture|close|i64_to_str|in|open|out|run|str_to_i64|to_lower|to_upper|trim)\\b",
           "captures": {
             "1": { "name": "support.class.builtin.bullscript" },
             "2": { "name": "punctuation.accessor.bullscript" },

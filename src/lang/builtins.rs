@@ -60,6 +60,8 @@ pub fn prototype(name: &str) -> Option<(Vec<BsType>, BsType)> {
         "to_upper" => Some((vec![BsType::String], BsType::String)),
         "to_lower" => Some((vec![BsType::String], BsType::String)),
         "trim"     => Some((vec![BsType::String], BsType::String)),
+        "i64_to_str" => Some((vec![BsType::I64], BsType::String)),
+        "str_to_i64" => Some((vec![BsType::String], BsType::I64)),
         "out"      => Some((vec![BsType::I64, BsType::String], BsType::Bool)),
         "in"       => Some((vec![BsType::I64], BsType::String)),
         "open"     => Some((vec![BsType::String, BsType::String], BsType::I64)),
@@ -72,7 +74,7 @@ pub fn prototype(name: &str) -> Option<(Vec<BsType>, BsType)> {
 
 /// Every builtin name, for help text and diagnostics.
 pub const NAMES: &[&str] = &[
-    "add", "to_upper", "to_lower", "trim",
+    "add", "to_upper", "to_lower", "trim", "i64_to_str", "str_to_i64",
     "out", "in", "open", "close",
     "run", "capture",
 ];
@@ -90,6 +92,23 @@ pub fn call(name: &str, args: &[Value]) -> Result<Value, BsError> {
         "to_upper" => Ok(Value::Str(as_str(args, 0)?.to_uppercase())),
         "to_lower" => Ok(Value::Str(as_str(args, 0)?.to_lowercase())),
         "trim"     => Ok(Value::Str(as_str(args, 0)?.trim().to_string())),
+
+        // builtin::i64_to_str(x: i64) -> String
+        "i64_to_str" => Ok(Value::Str(as_i64(args, 0)?.to_string())),
+
+        // builtin::str_to_i64(s: String) -> i64
+        //
+        // **Zero when the string does not parse.** Not an error, and not a
+        // value the caller has to test for. That is what Bullang's builtin of
+        // the same name does on all six of its backends, and the two languages
+        // sharing a name while disagreeing on what it means would be worse
+        // than either choice on its own.
+        //
+        // Surrounding whitespace is ignored, so a line read with builtin::in
+        // converts without a trim first.
+        "str_to_i64" => Ok(Value::I64(
+            as_str(args, 0)?.trim().parse::<i64>().unwrap_or(0)
+        )),
 
         // builtin::out(fd: i64, content: String) -> bool
         //
