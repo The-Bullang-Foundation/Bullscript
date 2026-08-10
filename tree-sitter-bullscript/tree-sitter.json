@@ -1,0 +1,17 @@
+{
+  "grammars": [
+    {
+      "name": "bullscript",
+      "camelcase": "Bullscript",
+      "scope": "source.bullscript",
+      "file-types": ["busc"],
+      "injection-regex": "^bullscript$"
+    }
+  ],
+  "metadata": {
+    "version": "1.0.0",
+    "license": "MIT",
+    "description": "Tree-sitter grammar for BullScript",
+    "authors": [{ "name": "The Bullang Foundation" }]
+  }
+}

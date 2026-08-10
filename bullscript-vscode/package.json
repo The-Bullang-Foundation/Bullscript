@@ -1,0 +1,62 @@
+{
+  "name": "bullscript",
+  "displayName": "BullScript",
+  "description": "Syntax highlighting and live syntax checking for BullScript (.busc files).",
+  "version": "1.0.0",
+  "publisher": "bullang-dev",
+  "license": "MIT",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "keywords": ["bullscript", "bullang", "scripting"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/The-Bullang-Foundation/Bullscript"
+  },
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "bullscript",
+        "aliases": ["BullScript", "busc"],
+        "extensions": [".busc"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "bullscript",
+        "scopeName": "source.bullscript",
+        "path": "./syntaxes/bullscript.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "BullScript",
+      "properties": {
+        "bullscript.serverPath": {
+          "type": "string",
+          "default": "bullscript",
+          "description": "Path to the bullscript binary, which provides the language server (`bullscript lsp`). Defaults to 'bullscript' — must be on PATH."
+        },
+        "bullscript.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace LSP messages between VS Code and the BullScript language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "dependencies": { "vscode-languageclient": "^9.0.1" },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0",
+    "@vscode/vsce": "^2.0.0"
+  }
+}

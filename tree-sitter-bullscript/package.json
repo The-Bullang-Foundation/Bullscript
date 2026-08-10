@@ -1,0 +1,7 @@
+{
+  "name": "tree-sitter-bullscript",
+  "version": "1.0.0",
+  "description": "Tree-sitter grammar for BullScript",
+  "license": "MIT",
+  "tree-sitter": [{ "scope": "source.bullscript", "file-types": ["busc"] }]
+}

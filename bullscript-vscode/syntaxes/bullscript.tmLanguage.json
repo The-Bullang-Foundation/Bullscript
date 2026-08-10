@@ -1,0 +1,129 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "BullScript",
+  "scopeName": "source.bullscript",
+  "fileTypes": ["busc"],
+
+  "_comment": [
+    "The same token model as Bullang's grammar, so a .bu and a .busc file look",
+    "like the same family — which they are, deliberately: BullScript borrows",
+    "the bullet syntax for familiarity.",
+    "",
+    "Where they differ, they differ for real reasons and the colouring shows it:",
+    "  - a BullScript binding carries its type, `-> {sum: i64}`, because there",
+    "    is no separate declaration to carry it",
+    "  - `bag::name` calls a saved script; `builtin::name` calls a builtin",
+    "  - there is no `let`, no struct, no enum, no directives and no escape",
+    "    block: a .busc file is pipes and nothing else",
+    "",
+    "The builtin list comes from lang/builtins.rs. It is much smaller than",
+    "Bullang's and is not the same list."
+  ],
+
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#builtin" },
+    { "include": "#bag" },
+    { "include": "#binding" },
+    { "include": "#string" },
+    { "include": "#number" },
+    { "include": "#type" },
+    { "include": "#operator" }
+  ],
+
+  "repository": {
+    "comment": {
+      "match": "//.*$",
+      "name": "comment.line.double-slash.bullscript"
+    },
+
+    "builtin": {
+      "patterns": [
+        {
+          "match": "\\b(builtin)(::)(add|capture|close|in|open|out|run|to_lower|to_upper|trim)\\b",
+          "captures": {
+            "1": { "name": "support.class.builtin.bullscript" },
+            "2": { "name": "punctuation.accessor.bullscript" },
+            "3": { "name": "support.function.builtin.bullscript" }
+          }
+        },
+        {
+          "_comment": "A name outside the set — the language server reports it as an error too.",
+          "match": "\\b(builtin)(::)([a-z_][a-z_0-9]*)\\b",
+          "captures": {
+            "1": { "name": "support.class.builtin.bullscript" },
+            "2": { "name": "punctuation.accessor.bullscript" },
+            "3": { "name": "invalid.deprecated.unknown-builtin.bullscript" }
+          }
+        }
+      ]
+    },
+
+    "bag": {
+      "_comment": "bag::name — a script saved in your bag, called like a builtin.",
+      "match": "\\b(bag)(::)([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+      "captures": {
+        "1": { "name": "support.class.bag.bullscript" },
+        "2": { "name": "punctuation.accessor.bullscript" },
+        "3": { "name": "entity.name.function.bag.bullscript" }
+      }
+    },
+
+    "binding": {
+      "_comment": "-> {name: type}. Unlike Bullang, the type is part of the binding.",
+      "match": "(->)\\s*(\\{)\\s*([a-zA-Z_][a-zA-Z0-9_]*)?\\s*(?:(:)\\s*(i64|f64|bool|String))?\\s*(\\})",
+      "captures": {
+        "1": { "name": "keyword.operator.arrow.bullscript" },
+        "2": { "name": "punctuation.definition.binding.bullscript" },
+        "3": { "name": "variable.other.binding.bullscript" },
+        "4": { "name": "punctuation.separator.type.bullscript" },
+        "5": { "name": "support.type.primitive.bullscript" },
+        "6": { "name": "punctuation.definition.binding.bullscript" }
+      }
+    },
+
+    "string": {
+      "begin": "\"",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.bullscript" } },
+      "end": "\"",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.bullscript" } },
+      "name": "string.quoted.double.bullscript",
+      "patterns": [
+        { "match": "\\\\.", "name": "constant.character.escape.bullscript" }
+      ]
+    },
+
+    "number": {
+      "patterns": [
+        { "match": "\\b-?\\d+\\.\\d+\\b", "name": "constant.numeric.float.bullscript" },
+        { "match": "\\b-?\\d+\\b", "name": "constant.numeric.integer.bullscript" }
+      ]
+    },
+
+    "type": {
+      "patterns": [
+        {
+          "_comment": "BullScript has four types. No Tuple, no unit, no user types.",
+          "match": "\\b(i64|f64|bool|String)\\b",
+          "name": "support.type.primitive.bullscript"
+        },
+        { "match": "\\b(true|false)\\b", "name": "constant.language.boolean.bullscript" },
+        {
+          "_comment": "An input slot: `a: i64` names a parameter, `1: i64` is a literal the script carries.",
+          "match": "([a-z_][a-zA-Z0-9_]*)\\s*(:)\\s*(?=i64|f64|bool|String)",
+          "captures": {
+            "1": { "name": "variable.parameter.bullscript" },
+            "2": { "name": "punctuation.separator.type.bullscript" }
+          }
+        }
+      ]
+    },
+
+    "operator": {
+      "patterns": [
+        { "match": "->", "name": "keyword.operator.arrow.bullscript" },
+        { "match": "(==|!=|<=|>=|&&|\\|\\||[+\\-*/%<>!])", "name": "keyword.operator.bullscript" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+id = "bullscript"
+name = "BullScript"
+description = "BullScript language support: syntax highlighting and live syntax checking."
+version = "1.0.0"
+schema_version = 1
+authors = ["The Bullang Foundation"]
+repository = "https://github.com/The-Bullang-Foundation/Bullscript"
+
+[grammars.bullscript]
+repository = "https://github.com/The-Bullang-Foundation/tree-sitter-bullscript"
+rev = "REPLACE_WITH_COMMIT_SHA"
+
+[language_servers.bullscript]
+name = "BullScript"
+languages = ["BullScript"]
