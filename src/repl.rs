@@ -20,6 +20,19 @@ use crate::record::Recorder;
 
 const PROMPT: &str = "bullscript -> ";
 
+/// Clear the screen and put the cursor at the top left.
+///
+/// Written directly rather than shelling out to `clear` or `cls`: those are
+/// two different commands on two platforms, either may be absent, and running
+/// a process to emit six bytes is a poor trade. The sequence is ANSI —
+/// `2J` erases the display, `H` homes the cursor — which Windows Terminal and
+/// every modern Unix terminal understand.
+fn clear_screen() {
+    use std::io::Write;
+    print!("\x1b[2J\x1b[H");
+    let _ = std::io::stdout().flush();
+}
+
 pub fn run() {
     let mut rl = match DefaultEditor::new() {
         Ok(e) => e,
@@ -75,6 +88,12 @@ fn handle_line(
     match line {
         "help" => { help::run(); return false; }
         "exit" => return true,
+
+        // Clears the screen, as `clear` does in a shell. It does *not* clear
+        // your bindings — this is the same distinction a terminal makes, where
+        // clearing the screen leaves the shell's variables alone. `bag::list`
+        // and the history are likewise untouched.
+        "clear" => { clear_screen(); return false; }
         "record::start" => { recorder.start(); return false; }
         "record::end" => {
             let mut ask = |prompt: &str| rl.readline(prompt).ok();

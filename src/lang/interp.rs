@@ -87,6 +87,23 @@ fn run_pipe(pipe: &Pipe, env: &mut Env, depth: usize) -> Result<Option<Value>, B
         args.push(resolve_input(input, env)?);
     }
 
+    // A bag entry may legitimately produce nothing; the binding below decides
+    // whether that is a problem.
+    if let PipeVal::Call(Callee::Bag(name)) = &pipe.val {
+        let produced = call_bag_entry_opt(name, &args, pipe.line, depth)?;
+        return match (&pipe.binding, produced) {
+            (Binding::Discard, _) => Ok(None),
+            (Binding::Bound { name: b, .. }, Some(v)) => {
+                env.insert(b.clone(), v.clone());
+                Ok(Some(v))
+            }
+            (Binding::Bound { name: b, .. }, None) => Err(BsError::at(pipe.line, format!(
+                "'bag::{}' ends in a discard '{{}}', so there is nothing for '{}' to hold",
+                name, b
+            ))),
+        };
+    }
+
     let result = match &pipe.val {
         PipeVal::Call(Callee::Builtin(name)) => {
             builtins::call(name, &args)
@@ -133,7 +150,13 @@ pub fn literal_value(lit: &Literal) -> Value {
     }
 }
 
-fn call_bag_entry(name: &str, args: &[Value], line: usize, depth: usize) -> Result<Value, BsError> {
+/// Run a bag entry and return whatever it produced.
+///
+/// `None` when the entry ends in a discard. That is not an error here: the
+/// type checker has already established that the caller discards too, and an
+/// entry whose purpose is a side effect — printing, writing a file — is a
+/// perfectly ordinary thing to keep in a bag.
+fn call_bag_entry_opt(name: &str, args: &[Value], line: usize, depth: usize) -> Result<Option<Value>, BsError> {
     if depth >= MAX_CALL_DEPTH {
         return Err(BsError::at(line, format!(
             "call depth exceeded calling bag::{} — likely a recursive cycle", name
@@ -150,8 +173,14 @@ fn call_bag_entry(name: &str, args: &[Value], line: usize, depth: usize) -> Resu
     let effective = args_for_first_pipe(&pipes[0], args);
     let result = run_first_and_rest(&pipes, &effective, &mut callee_env, depth + 1)?;
 
-    result.ok_or_else(|| BsError::at(line, format!(
-        "bag::{} ended in a discard '{{}}' and has no return value", name
+    Ok(result)
+}
+
+/// As above, for the one caller that needs a value: a bag entry used inside a
+/// larger expression, where there is nowhere to put "nothing".
+fn call_bag_entry(name: &str, args: &[Value], line: usize, depth: usize) -> Result<Value, BsError> {
+    call_bag_entry_opt(name, args, line, depth)?.ok_or_else(|| BsError::at(line, format!(
+        "'bag::{}' ends in a discard '{{}}', so it produces no value to use here", name
     )))
 }
 
@@ -176,11 +205,30 @@ fn run_pipe_with_args(
     env:   &mut Env,
     depth: usize,
 ) -> Result<Option<Value>, BsError> {
+    // Same as in run_pipe: a bag entry may produce nothing, and the binding
+    // decides whether that matters. This path is the *first* pipe of a
+    // program, which is where a script that only calls one bag entry lives.
+    if let PipeVal::Call(Callee::Bag(name)) = &pipe.val {
+        let produced = call_bag_entry_opt(name, args, pipe.line, depth)?;
+        return match (&pipe.binding, produced) {
+            (Binding::Discard, _) => Ok(None),
+            (Binding::Bound { name: b, .. }, Some(v)) => {
+                env.insert(b.clone(), v.clone());
+                Ok(Some(v))
+            }
+            (Binding::Bound { name: b, .. }, None) => Err(BsError::at(pipe.line, format!(
+                "'bag::{}' ends in a discard '{{}}', so there is nothing for '{}' to hold",
+                name, b
+            ))),
+        };
+    }
+
     let result = match &pipe.val {
         PipeVal::Call(Callee::Builtin(name)) => {
             builtins::call(name, args).map_err(|e| BsError::at(pipe.line, e.message))?
         }
-        PipeVal::Call(Callee::Bag(name)) => call_bag_entry(name, args, pipe.line, depth)?,
+        // Handled above.
+        PipeVal::Call(Callee::Bag(_)) => unreachable!(),
         PipeVal::Expr(expr) => {
             let local: Env = pipe.inputs.iter().zip(args)
                 .filter_map(|(i, v)| match &i.expr {

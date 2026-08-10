@@ -110,9 +110,25 @@ fn check_pipe(
         PipeVal::Call(Callee::Bag(name)) => {
             let sig = resolve(name).map_err(|e| BsError::at(pipe.line, e))?;
             check_args("bag entry", name, &sig.params, &arg_tys, pipe.line)?;
-            sig.ret.ok_or_else(|| BsError::at(pipe.line, format!(
-                "bag::{} ends in a discard '{{}}' and has no value to return", name
-            )))?
+            match (sig.ret, &pipe.binding) {
+                (Some(ret), _) => ret,
+
+                // The entry produces nothing and the caller asked for nothing.
+                //
+                // This used to be rejected outright, before the binding was
+                // even looked at — so a script that exists to print something
+                // could be put in a bag and then never called from a pipe,
+                // which is most of what a bag is for.
+                (None, Binding::Discard) => return Ok(None),
+
+                (None, Binding::Bound { name: binding, .. }) => {
+                    return Err(BsError::at(pipe.line, format!(
+                        "'bag::{}' ends in a discard '{{}}', so it produces no value \
+                         and there is nothing for '{}' to hold. Call it with '-> {{}}'.",
+                        name, binding
+                    )));
+                }
+            }
         }
         PipeVal::Expr(expr) => {
             // A bare expression may only mention this pipe's own inputs.
@@ -122,7 +138,8 @@ fn check_pipe(
                     InputExpr::Lit(_) => None,
                 })
                 .collect();
-            check_expr(expr, &local, pipe.line)?
+            check_expr(expr, &local, pipe.line)
+                .map_err(|e| name_hint(expr, &local, pipe.line, resolve).unwrap_or(e))?
         }
     };
 
@@ -164,6 +181,49 @@ fn check_args(
         }
     }
     Ok(())
+}
+
+/// A better error for `(4, 5) : print_add -> {};`
+///
+/// A bare name in the value position is a *variable*, so an unknown one is
+/// reported as not being one of the pipe's inputs — which is true, and
+/// unhelpful when the name is plainly a script the user has in their bag or a
+/// builtin they know exists. Calling something in BullScript means saying
+/// where it comes from: `bag::print_add`, `builtin::trim`.
+///
+/// This is where BullScript and Bullang differ, and the difference is easy to
+/// trip over: in Bullang `(a, b) : add -> {sum};` calls `add`, because a
+/// Bullang folder has one namespace and the inventory says what is in it.
+/// BullScript has two — your bag and the builtins — so it asks which.
+///
+/// Returns None when the name is nothing recognisable, leaving the original
+/// error, which is then the right one.
+fn name_hint(
+    expr:    &Expr,
+    local:   &HashMap<String, BsType>,
+    line:    usize,
+    resolve: BagResolver,
+) -> Option<BsError> {
+    let Expr::Var(name) = expr else { return None };
+    if local.contains_key(name) {
+        return None;
+    }
+
+    if resolve(name).is_ok() {
+        return Some(BsError::at(line, format!(
+            "'{}' is a script in your bag. Call it with 'bag::{}'.",
+            name, name
+        )));
+    }
+
+    if super::builtins::prototype(name).is_some() {
+        return Some(BsError::at(line, format!(
+            "'{}' is a builtin. Call it with 'builtin::{}'.",
+            name, name
+        )));
+    }
+
+    None
 }
 
 // ── expressions ───────────────────────────────────────────────────────────

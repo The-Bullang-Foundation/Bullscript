@@ -52,6 +52,10 @@ Directives (typed bare, not prefixed with anything):
   bag::list
       List your bag entries (builtins never appear here).
 
+  clear
+      Clear the screen, as in a shell. Your bindings, your bag and your
+      history are untouched.
+
   bag::export <path>
       Write every script in your bag into one .zip at <path>. If <path>
       is a directory the archive is named bullscript-bag.zip inside it;
