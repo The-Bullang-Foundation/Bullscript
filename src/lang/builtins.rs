@@ -197,7 +197,37 @@ pub fn call(name: &str, args: &[Value]) -> Result<Value, BsError> {
 
 // ── fd helpers ────────────────────────────────────────────────────────────
 
+/// Whether the last thing written to the terminal ended with a newline.
+///
+/// `builtin::out` writes exactly what it is given and appends nothing, so a
+/// pipe can leave the cursor part-way along a line. The REPL needs to know,
+/// because rustyline draws its prompt with a carriage return followed by
+/// erase-to-end-of-line — which wipes whatever is on that line. Short output
+/// vanished entirely; output long enough to wrap lost only its last row, which
+/// looked like truncation.
+static AT_LINE_START: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// True if the terminal cursor is at the start of a line.
+pub fn at_line_start() -> bool {
+    AT_LINE_START.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Note that the cursor has been returned to the start of a line by something
+/// other than a write — the REPL calls this after emitting its own newline.
+pub fn mark_line_start() {
+    AT_LINE_START.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn write_fd(fd: i64, bytes: &[u8]) -> bool {
+    // Only the two terminal streams move the cursor the REPL cares about. A
+    // write to an opened file does not.
+    if (fd == 1 || fd == 2) && !bytes.is_empty() {
+        AT_LINE_START.store(
+            bytes.last() == Some(&b'\n'),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
     match fd {
         1 => {
             let stdout = std::io::stdout();

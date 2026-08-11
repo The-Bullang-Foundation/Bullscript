@@ -74,6 +74,18 @@ pub fn run() {
         if handle_line(line, &mut env, &mut recorder, &mut rl) {
             break;
         }
+
+        // `builtin::out` appends nothing, so a pipe can leave the cursor
+        // part-way along a line. rustyline draws its next prompt with a
+        // carriage return followed by erase-to-end-of-line, which would wipe
+        // that line — short output vanished outright, and output long enough
+        // to wrap lost its last row, which looked like truncation. Finishing
+        // the line here is what a shell does with a command whose output has
+        // no final newline.
+        if !crate::lang::builtins::at_line_start() {
+            println!();
+            crate::lang::builtins::mark_line_start();
+        }
     }
 
     quit(&mut recorder, &mut rl, history.as_ref());
