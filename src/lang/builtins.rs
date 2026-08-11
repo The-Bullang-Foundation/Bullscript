@@ -178,7 +178,13 @@ pub fn call(name: &str, args: &[Value]) -> Result<Value, BsError> {
         // builtin::run(cmd: String) -> bool — success/failure only, output discarded.
         "run" => {
             let cmd = as_str(args, 0)?;
-            let status = shell(cmd)?.status;
+            let status = shell_inherit(cmd)?;
+            // The child owns the terminal while it runs, so where it left the
+            // cursor is not something we can see. Assume the worst: the REPL
+            // will finish the line before its next prompt, which costs a blank
+            // line after a command that ended tidily and saves a line of
+            // output from a command that did not.
+            AT_LINE_START.store(false, std::sync::atomic::Ordering::Relaxed);
             Ok(Value::Bool(status.success()))
         }
 
@@ -332,12 +338,34 @@ fn read_line_raw_fd(fd: i64) -> Result<String, BsError> {
 
 // ── shell ─────────────────────────────────────────────────────────────────
 
+/// Run a command with its output captured — for `builtin::capture`, which
+/// hands that output back as a String.
 fn shell(cmd: &str) -> Result<std::process::Output, BsError> {
     let (program, flag) = if cfg!(windows) { ("cmd", "/C") } else { ("sh", "-c") };
     Command::new(program)
         .arg(flag)
         .arg(cmd)
         .output()
+        .map_err(|e| BsError::new(format!("failed to run command: {}", e)))
+}
+
+/// Run a command with the terminal handed straight to it — for `builtin::run`,
+/// which is about making something happen rather than reading its output.
+///
+/// This used `.output()`, which captures both streams and then throws them
+/// away: `builtin::run("echo hi")` printed nothing, and a command that wanted
+/// to ask a question got an empty stdin and hung or failed. `run` and
+/// `capture` were the same call, differing only in what they returned.
+///
+/// `.status()` inherits all three streams, so the child prints where the user
+/// can see it and can prompt for input. Use `capture` when the output is what
+/// you are after.
+fn shell_inherit(cmd: &str) -> Result<std::process::ExitStatus, BsError> {
+    let (program, flag) = if cfg!(windows) { ("cmd", "/C") } else { ("sh", "-c") };
+    Command::new(program)
+        .arg(flag)
+        .arg(cmd)
+        .status()
         .map_err(|e| BsError::new(format!("failed to run command: {}", e)))
 }
 
