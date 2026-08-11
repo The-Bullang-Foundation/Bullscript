@@ -120,9 +120,15 @@ impl<'a> Parser<'a> {
             Tok::Float(x)    => { self.advance(); InputExpr::Lit(Literal::F64(x)) }
             Tok::Bool(b)     => { self.advance(); InputExpr::Lit(Literal::Bool(b)) }
             Tok::Str(s)      => { self.advance(); InputExpr::Lit(Literal::Str(s)) }
+            // `data::entry.field` — a value read out of a stored document.
+            Tok::Ident(ref n) if n == "data"
+                && self.toks.get(self.pos + 1).map(|t| &t.tok) == Some(&Tok::DoubleColon) =>
+            {
+                InputExpr::Data(self.parse_data_ref()?)
+            }
             Tok::Ident(name) => { self.advance(); InputExpr::Var(name) }
             other => return Err(BsError::at(line, format!(
-                "expected a literal or a variable name in the input list, found {}", describe(&other)
+                "expected a literal, a variable name or a data field in the input list, found {}", describe(&other)
             ))),
         };
         self.expect(&Tok::Colon, "':' (every input needs an explicit type)")?;
@@ -157,11 +163,49 @@ impl<'a> Parser<'a> {
             self.advance();
             return Ok(Binding::Discard);
         }
+        // `-> {data::entry.field: T}` writes into a document instead of
+        // declaring a new binding.
+        if matches!(self.peek(), Tok::Ident(n) if n == "data")
+            && self.toks.get(self.pos + 1).map(|t| &t.tok) == Some(&Tok::DoubleColon)
+        {
+            let target = self.parse_data_ref()?;
+            self.expect(&Tok::Colon, "':' (every binding needs an explicit type)")?;
+            let ty = self.expect_type()?;
+            self.expect(&Tok::RBrace, "'}'")?;
+            return Ok(Binding::Data { target, ty });
+        }
+
         let name = self.expect_ident("a binding name")?;
         self.expect(&Tok::Colon, "':' (every binding needs an explicit type)")?;
         let ty = self.expect_type()?;
         self.expect(&Tok::RBrace, "'}'")?;
         Ok(Binding::Bound { name, ty })
+    }
+
+    /// `data::entry.field` or `data::entry.field.subfield`.
+    ///
+    /// At least one field is required: a bare `data::prompt` is the whole
+    /// document, which is an object and not one of BullScript's four types.
+    fn parse_data_ref(&mut self) -> Result<DataRef, BsError> {
+        let line = self.line();
+        self.advance(); // 'data'
+        self.advance(); // '::'
+        let entry = self.expect_ident("a data entry name")?;
+
+        let mut path = Vec::new();
+        while self.check(&Tok::Dot) {
+            self.advance();
+            path.push(self.expect_ident("a field name after '.'")?);
+        }
+
+        if path.is_empty() {
+            return Err(BsError::at(line, format!(
+                "'data::{}' is a whole document, not a value. Name a field of it, \
+                 like 'data::{}.audit'.",
+                entry, entry
+            )));
+        }
+        Ok(DataRef { entry, path })
     }
 
     // ── expressions (precedence climbing) ───────────────────────────────
@@ -289,6 +333,7 @@ fn describe(t: &Tok) -> String {
         Tok::RBrace => "'}'".into(),
         Tok::Colon => "':'".into(),
         Tok::DoubleColon => "'::'".into(),
+        Tok::Dot => "'.'".into(),
         Tok::Comma => "','".into(),
         Tok::Semicolon => "';'".into(),
         Tok::Arrow => "'->'".into(),

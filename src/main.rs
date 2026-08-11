@@ -1,4 +1,5 @@
 mod bag;
+mod data;
 mod help;
 mod lang;
 mod lsp;

@@ -52,6 +52,28 @@ Directives (typed bare, not prefixed with anything):
   bag::list
       List your bag entries (builtins never appear here).
 
+  data::add <path.json> <n>
+      Parse and store a .json file under <n>. The store keeps its own copy,
+      so editing the original afterwards does not change the entry — run
+      data::add again for that.
+
+  data::remove <n>
+      Remove a single document from the store.
+
+  data::list
+      List your data entries.
+
+  data::export <path>
+      Write every document into one .zip at <path>.
+
+  data::import <path>
+      Read every .json in a .zip into your store.
+
+      Read a field with data::<name>.<field>, as an input or a binding:
+        (1: i64, data::prompt.audit: String) : builtin::out -> {};
+        ("new text": String) : builtin::trim -> {data::prompt.audit: String};
+      A field keeps the type it has in the document, and must already exist.
+
   clear
       Clear the screen, as in a shell. Your bindings, your bag and your
       history are untouched.

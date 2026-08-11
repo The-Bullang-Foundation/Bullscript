@@ -59,6 +59,8 @@ pub fn run(path: &str, args: &[String]) {
 
     // Only the named slots are parameters.
     let params: Vec<&lang::ast::TypedInput> = expected.iter()
+        // Named slots only. A literal and a data field are values the script
+        // already carries, so neither is a command-line parameter.
         .filter(|i| matches!(i.expr, lang::ast::InputExpr::Var(_)))
         .collect();
 
@@ -66,7 +68,8 @@ pub fn run(path: &str, args: &[String]) {
         let names: Vec<String> = params.iter()
             .map(|i| match &i.expr {
                 lang::ast::InputExpr::Var(n) => format!("<{}: {}>", n, i.ty),
-                lang::ast::InputExpr::Lit(_) => unreachable!("filtered above"),
+                lang::ast::InputExpr::Lit(_) | lang::ast::InputExpr::Data(_) =>
+                unreachable!("filtered above"),
             })
             .collect();
         let usage = if names.is_empty() {
@@ -89,6 +92,13 @@ pub fn run(path: &str, args: &[String]) {
         match &input.expr {
             lang::ast::InputExpr::Lit(lit) => {
                 values.push(lang::interp::literal_value(lit));
+            }
+            // Read at the point the pipe runs, like any other data access.
+            lang::ast::InputExpr::Data(r) => {
+                match crate::data::read_field(r) {
+                    Ok(v)  => values.push(v),
+                    Err(e) => fail(&format!("{}: {}", path, e)),
+                }
             }
             lang::ast::InputExpr::Var(_) => {
                 let text = next_arg.next().expect("counts checked above");

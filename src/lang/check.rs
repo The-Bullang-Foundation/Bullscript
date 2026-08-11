@@ -75,6 +75,18 @@ fn check_pipe(
     let mut arg_tys = Vec::with_capacity(pipe.inputs.len());
     for input in &pipe.inputs {
         match &input.expr {
+            // The document is on disk at check time, so a misspelled entry, a
+            // misspelled field, or a wrong type is caught before anything
+            // runs — the same as the rest of BullScript.
+            InputExpr::Data(r) => {
+                let actual = crate::data::field_type(r)
+                    .map_err(|e| BsError::at(input.line, e))?;
+                if actual != input.ty {
+                    return Err(BsError::at(input.line, format!(
+                        "'{}' is {} but is annotated as {}", r, actual, input.ty
+                    )));
+                }
+            }
             InputExpr::Lit(lit) => {
                 if lit.ty() != input.ty {
                     return Err(BsError::at(input.line, format!(
@@ -121,6 +133,13 @@ fn check_pipe(
                 // which is most of what a bag is for.
                 (None, Binding::Discard) => return Ok(None),
 
+                (None, Binding::Data { target, .. }) => {
+                    return Err(BsError::at(pipe.line, format!(
+                        "'bag::{}' ends in a discard '{{}}', so it produces no value \
+                         to write into '{}'",
+                        name, target
+                    )));
+                }
                 (None, Binding::Bound { name: binding, .. }) => {
                     return Err(BsError::at(pipe.line, format!(
                         "'bag::{}' ends in a discard '{{}}', so it produces no value \
@@ -135,7 +154,9 @@ fn check_pipe(
             let local: HashMap<String, BsType> = pipe.inputs.iter()
                 .filter_map(|i| match &i.expr {
                     InputExpr::Var(n) => Some((n.clone(), i.ty)),
-                    InputExpr::Lit(_) => None,
+                    // A literal and a data field are values, not names: there
+                    // is nothing for a bare expression to refer to them by.
+                    InputExpr::Lit(_) | InputExpr::Data(_) => None,
                 })
                 .collect();
             check_expr(expr, &local, pipe.line)
@@ -146,6 +167,32 @@ fn check_pipe(
     // ── binding ───────────────────────────────────────────────────────────
     match &pipe.binding {
         Binding::Discard => Ok(None),
+
+        // A write must match the field's existing type, and the field must
+        // already exist. Both rules exist to keep the checking honest: without
+        // the first, a later read of the same field would have been checked
+        // against a type the write has since changed; without the second, a
+        // misspelled field would silently create a new one, and catching that
+        // typo here is the main thing this buys.
+        Binding::Data { target, ty } => {
+            let existing = crate::data::field_type(target)
+                .map_err(|e| BsError::at(pipe.line, e))?;
+            if existing != *ty {
+                return Err(BsError::at(pipe.line, format!(
+                    "'{}' is {} and cannot be written as {} — a data field keeps the \
+                     type it has in the document",
+                    target, existing, ty
+                )));
+            }
+            if produced != *ty {
+                return Err(BsError::at(pipe.line, format!(
+                    "'{}' is {} but the pipe produces {}", target, ty, produced
+                )));
+            }
+            // A write produces nothing for later pipes, like a discard.
+            Ok(None)
+        }
+
         Binding::Bound { name, ty } => {
             if produced != *ty {
                 return Err(BsError::at(pipe.line, format!(

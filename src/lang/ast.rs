@@ -48,6 +48,30 @@ pub struct TypedInput {
 pub enum InputExpr {
     Lit(Literal),
     Var(String),
+    /// `data::prompt.audit` — a field of a stored JSON document.
+    ///
+    /// A value, not a call, which is why it lives here beside literals and
+    /// variables rather than in `PipeVal` alongside `bag::` and `builtin::`.
+    Data(DataRef),
+}
+
+/// A path into a stored JSON document: the entry name, then one or more
+/// field names. `data::prompt.audit.system` is `{ entry: "prompt",
+/// path: ["audit", "system"] }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DataRef {
+    pub entry: String,
+    pub path:  Vec<String>,
+}
+
+impl std::fmt::Display for DataRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "data::{}", self.entry)?;
+        for part in &self.path {
+            write!(f, ".{}", part)?;
+        }
+        Ok(())
+    }
 }
 
 /// What a callable is namespaced under. `builtin::` for the fixed, hardcoded
@@ -96,6 +120,12 @@ pub enum PipeVal {
 pub enum Binding {
     Discard,
     Bound { name: String, ty: BsType },
+    /// `-> {data::prompt.audit: String}` — write the pipe's value into a field
+    /// of a stored document, rather than into a new variable.
+    ///
+    /// The write happens when the pipe runs, like `builtin::out`, so a program
+    /// that fails halfway leaves the writes that already happened in place.
+    Data { target: DataRef, ty: BsType },
 }
 
 #[derive(Debug, Clone)]

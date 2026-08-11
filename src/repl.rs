@@ -12,6 +12,7 @@ use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 
 use crate::bag;
+use crate::data;
 use crate::help;
 use crate::lang;
 use crate::lang::interp::{self, Env};
@@ -116,6 +117,85 @@ fn handle_line(
                 Ok(true)  => println!("  Added '{}' to the bag (replaced an existing entry).", rest[1]),
                 Ok(false) => println!("  Added '{}' to the bag.", rest[1]),
                 Err(e)    => eprintln!("  {}", e),
+            }
+        }
+        return false;
+    }
+
+    // ── data:: directives ────────────────────────────────────────────────
+    //
+    // The same five as the bag's, differing only in what they hold. The bag
+    // stores scripts you call; the store holds JSON documents you read fields
+    // out of with `data::name.field`.
+
+    if line == "data::add" || line.starts_with("data::add ") {
+        let rest: Vec<&str> = line["data::add".len()..].split_whitespace().collect();
+        if rest.len() != 2 {
+            eprintln!("  Usage: data::add <path/to/file.json> <name>");
+        } else {
+            match data::add(rest[0], rest[1]) {
+                Ok(true)  => println!("  Added '{}' to your data (replaced an existing entry).", rest[1]),
+                Ok(false) => println!("  Added '{}' to your data.", rest[1]),
+                Err(e)    => eprintln!("  {}", e),
+            }
+        }
+        return false;
+    }
+
+    if line == "data::remove" || line.starts_with("data::remove ") {
+        let rest: Vec<&str> = line["data::remove".len()..].split_whitespace().collect();
+        if rest.len() != 1 {
+            eprintln!("  Usage: data::remove <name>");
+        } else {
+            match data::remove(rest[0]) {
+                Ok(true)  => println!("  Removed '{}' from your data.", rest[0]),
+                Ok(false) => println!("  '{}' is not in your data.", rest[0]),
+                Err(e)    => eprintln!("  {}", e),
+            }
+        }
+        return false;
+    }
+
+    if line == "data::list" {
+        match data::list() {
+            Ok(entries) if entries.is_empty() => println!("  (your data is empty)"),
+            Ok(entries) => {
+                for (name, path) in entries {
+                    println!("  {} -> {}", name, path);
+                }
+            }
+            Err(e) => eprintln!("  {}", e),
+        }
+        return false;
+    }
+
+    if line == "data::export" || line.starts_with("data::export ") {
+        let rest: Vec<&str> = line["data::export".len()..].split_whitespace().collect();
+        if rest.len() != 1 {
+            eprintln!("  Usage: data::export <path/to/archive.zip>");
+        } else {
+            match data::export(rest[0]) {
+                Ok((n, dest)) => println!("  Exported {} document(s) to {}.", n, dest.display()),
+                Err(e)        => eprintln!("  {}", e),
+            }
+        }
+        return false;
+    }
+
+    if line == "data::import" || line.starts_with("data::import ") {
+        let rest: Vec<&str> = line["data::import".len()..].split_whitespace().collect();
+        if rest.len() != 1 {
+            eprintln!("  Usage: data::import <path/to/archive.zip>");
+        } else {
+            match data::import(rest[0]) {
+                Ok((added, replaced, skipped)) => {
+                    println!("  Imported {} document(s), replaced {}.", added, replaced);
+                    for name in &skipped {
+                        eprintln!("  Skipped '{}': its name cannot be used as a data entry, \
+                                   or it is not a JSON object.", name);
+                    }
+                }
+                Err(e) => eprintln!("  {}", e),
             }
         }
         return false;

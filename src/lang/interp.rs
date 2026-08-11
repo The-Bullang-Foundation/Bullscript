@@ -62,6 +62,7 @@ pub fn seed_params(pipes: &Program, args: &[Value]) -> Result<Env, BsError> {
         if arg.ty() != input.ty {
             let what = match &input.expr {
                 InputExpr::Var(n) => format!("parameter '{}'", n),
+                InputExpr::Data(r) => format!("'{}'", r),
                 InputExpr::Lit(_) => "this argument".to_string(),
             };
             return Err(BsError::at(input.line, format!(
@@ -97,9 +98,17 @@ fn run_pipe(pipe: &Pipe, env: &mut Env, depth: usize) -> Result<Option<Value>, B
                 env.insert(b.clone(), v.clone());
                 Ok(Some(v))
             }
+            (Binding::Data { target, .. }, Some(v)) => {
+                crate::data::write_field(target, &v).map_err(|e| BsError::at(pipe.line, e))?;
+                Ok(None)
+            }
             (Binding::Bound { name: b, .. }, None) => Err(BsError::at(pipe.line, format!(
                 "'bag::{}' ends in a discard '{{}}', so there is nothing for '{}' to hold",
                 name, b
+            ))),
+            (Binding::Data { target, .. }, None) => Err(BsError::at(pipe.line, format!(
+                "'bag::{}' ends in a discard '{{}}', so there is nothing to write into '{}'",
+                name, target
             ))),
         };
     }
@@ -116,7 +125,8 @@ fn run_pipe(pipe: &Pipe, env: &mut Env, depth: usize) -> Result<Option<Value>, B
             let local: Env = pipe.inputs.iter().zip(&args)
                 .filter_map(|(i, v)| match &i.expr {
                     InputExpr::Var(n) => Some((n.clone(), v.clone())),
-                    InputExpr::Lit(_) => None,
+                    // Values, not names — nothing to refer to them by.
+                    InputExpr::Lit(_) | InputExpr::Data(_) => None,
                 })
                 .collect();
             eval_expr(expr, &local, pipe.line)?
@@ -125,6 +135,11 @@ fn run_pipe(pipe: &Pipe, env: &mut Env, depth: usize) -> Result<Option<Value>, B
 
     match &pipe.binding {
         Binding::Discard => Ok(None),
+        // A write takes effect when the pipe runs, like builtin::out.
+        Binding::Data { target, .. } => {
+            crate::data::write_field(target, &result).map_err(|e| BsError::at(pipe.line, e))?;
+            Ok(None)
+        }
         Binding::Bound { name, .. } => {
             env.insert(name.clone(), result.clone());
             Ok(Some(result))
@@ -135,6 +150,8 @@ fn run_pipe(pipe: &Pipe, env: &mut Env, depth: usize) -> Result<Option<Value>, B
 fn resolve_input(input: &TypedInput, env: &Env) -> Result<Value, BsError> {
     match &input.expr {
         InputExpr::Lit(lit) => Ok(literal_value(lit)),
+        InputExpr::Data(r) => crate::data::read_field(r)
+            .map_err(|e| BsError::at(input.line, e)),
         InputExpr::Var(name) => env.get(name).cloned().ok_or_else(|| {
             BsError::at(input.line, format!("undefined variable '{}'", name))
         }),
@@ -216,9 +233,17 @@ fn run_pipe_with_args(
                 env.insert(b.clone(), v.clone());
                 Ok(Some(v))
             }
+            (Binding::Data { target, .. }, Some(v)) => {
+                crate::data::write_field(target, &v).map_err(|e| BsError::at(pipe.line, e))?;
+                Ok(None)
+            }
             (Binding::Bound { name: b, .. }, None) => Err(BsError::at(pipe.line, format!(
                 "'bag::{}' ends in a discard '{{}}', so there is nothing for '{}' to hold",
                 name, b
+            ))),
+            (Binding::Data { target, .. }, None) => Err(BsError::at(pipe.line, format!(
+                "'bag::{}' ends in a discard '{{}}', so there is nothing to write into '{}'",
+                name, target
             ))),
         };
     }
@@ -233,7 +258,8 @@ fn run_pipe_with_args(
             let local: Env = pipe.inputs.iter().zip(args)
                 .filter_map(|(i, v)| match &i.expr {
                     InputExpr::Var(n) => Some((n.clone(), v.clone())),
-                    InputExpr::Lit(_) => None,
+                    // Values, not names — nothing to refer to them by.
+                    InputExpr::Lit(_) | InputExpr::Data(_) => None,
                 })
                 .collect();
             eval_expr(expr, &local, pipe.line)?
@@ -242,6 +268,11 @@ fn run_pipe_with_args(
 
     match &pipe.binding {
         Binding::Discard => Ok(None),
+        // A write takes effect when the pipe runs, like builtin::out.
+        Binding::Data { target, .. } => {
+            crate::data::write_field(target, &result).map_err(|e| BsError::at(pipe.line, e))?;
+            Ok(None)
+        }
         Binding::Bound { name, .. } => {
             env.insert(name.clone(), result.clone());
             Ok(Some(result))
