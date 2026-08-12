@@ -416,48 +416,131 @@ fn archive_destination(path: &str) -> PathBuf {
 // disagree about a *scalar*; objects, arrays and null are not BullScript values
 // at all, and a path landing on one is an error naming what is actually there.
 
-use crate::lang::ast::DataRef;
+use crate::lang::ast::{DataRef, PathSeg};
 use crate::lang::types::BsType;
 
-/// Walk a `DataRef`'s path through a document.
+/// Resolve one path segment against an object, given the variables in scope.
+///
+/// `keys` supplies the value of a `[key]` segment. A `Field` segment does not
+/// need it, which is why the whole path can be walked at check time as long as
+/// every segment is written out.
+fn step<'a>(
+    cur:  &'a serde_json::Value,
+    seg:  &PathSeg,
+    keys: &dyn Fn(&str) -> Option<String>,
+    r:    &DataRef,
+    done: &[PathSeg],
+) -> Result<&'a serde_json::Value, String> {
+    let obj = cur.as_object().ok_or_else(|| {
+        let so_far: String = done.iter().map(|p| p.to_string()).collect();
+        format!(
+            "'data::{}{}' is {}, so it has no fields",
+            r.entry, so_far, json_kind(cur)
+        )
+    })?;
+
+    let name = match seg {
+        PathSeg::Field(n) => n.clone(),
+        PathSeg::Key(v) => keys(v).ok_or_else(|| format!(
+            "the value of '{}' is not known here", v
+        ))?,
+    };
+
+    obj.get(&name).ok_or_else(|| {
+        let mut names: Vec<&str> = obj.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        match seg {
+            PathSeg::Field(_) => format!(
+                "'{}' has no field '{}'{}",
+                r, name,
+                if names.is_empty() { String::new() }
+                else { format!(" — it has {}", names.join(", ")) }
+            ),
+            // A key came from a variable, so the value is worth quoting: the
+            // mistake is in the data being passed, not in the source.
+            PathSeg::Key(v) => format!(
+                "'{}' holds \"{}\", which is not a field of 'data::{}'{}",
+                v, name, r.entry,
+                if names.is_empty() { String::new() }
+                else { format!(" — it has {}", names.join(", ")) }
+            ),
+        }
+    })
+}
+
+/// Walk a fully written-out path. Used where no variables are available.
 fn walk<'a>(doc: &'a serde_json::Value, r: &DataRef) -> Result<&'a serde_json::Value, String> {
     let mut cur = doc;
-    for (i, part) in r.path.iter().enumerate() {
-        let obj = cur.as_object().ok_or_else(|| {
-            let so_far = r.path[..i].join(".");
-            format!(
-                "'data::{}{}{}' is {}, so it has no field '{}'",
-                r.entry,
-                if so_far.is_empty() { "" } else { "." },
-                so_far,
-                json_kind(cur),
-                part
-            )
-        })?;
-        cur = obj.get(part).ok_or_else(|| {
-            let mut names: Vec<&str> = obj.keys().map(String::as_str).collect();
-            names.sort_unstable();
-            format!(
-                "'{}' has no field '{}'{}",
-                r, part,
-                if names.is_empty() {
-                    String::new()
-                } else {
-                    format!(" — it has {}", names.join(", "))
-                }
-            )
-        })?;
+    for (i, seg) in r.path.iter().enumerate() {
+        cur = step(cur, seg, &|_| None, r, &r.path[..i])?;
+    }
+    Ok(cur)
+}
+
+/// The object a path reaches just before its final segment.
+fn parent_of<'a>(doc: &'a serde_json::Value, r: &DataRef) -> Result<&'a serde_json::Value, String> {
+    let mut cur = doc;
+    for (i, seg) in r.path[..r.path.len() - 1].iter().enumerate() {
+        cur = step(cur, seg, &|_| None, r, &r.path[..i])?;
     }
     Ok(cur)
 }
 
 /// The BullScript type of the field a `DataRef` names.
 ///
-/// Reads the document from disk, which is what makes a misspelled entry, a
-/// misspelled field or a wrong annotation a check-time error rather than a
-/// surprise at run time.
+/// A written-out path names one field, so its type is that field's. A path
+/// ending in `[key]` could name any field of the object it selects from, so it
+/// has one type only if **every** field of that object has that type — which
+/// is what makes a dynamic key statically checkable rather than a hole in the
+/// checking. For a document whose fields are all Strings, `data::norm[lang]`
+/// is provably a String whatever `lang` turns out to hold.
+///
+/// A `[key]` earlier in the path is not supported for the same reason in
+/// reverse: the objects it could select are not required to agree in shape, so
+/// there is nothing to check the rest of the path against.
 pub fn field_type(r: &DataRef) -> Result<BsType, String> {
     let doc = document(&r.entry)?;
+
+    if let Some(i) = r.path.iter().position(|s| matches!(s, PathSeg::Key(_))) {
+        if i != r.path.len() - 1 {
+            return Err(format!(
+                "'{}': a [key] may only be the last step of a path, because what it \
+                 selects is not known until the pipe runs",
+                r
+            ));
+        }
+        let parent = parent_of(&doc, r)?;
+        let obj = parent.as_object().ok_or_else(|| format!(
+            "'{}' selects from {}, which has no fields", r, json_kind(parent)
+        ))?;
+        if obj.is_empty() {
+            return Err(format!("'data::{}' has no fields to select from", r.entry));
+        }
+
+        // Every field must agree, or the annotation could not be right for
+        // every key the variable might hold.
+        let mut agreed: Option<BsType> = None;
+        for (name, v) in obj {
+            let ty = value_type(v).ok_or_else(|| format!(
+                "'{}' could select field '{}', which is {} — not one of BullScript's \
+                 four types",
+                r, name, json_kind(v)
+            ))?;
+            match agreed {
+                None => agreed = Some(ty),
+                Some(prev) if prev == ty => {}
+                Some(prev) => return Err(format!(
+                    "'{}' could select any field of 'data::{}', but they do not all \
+                     have the same type — '{}' is {} where another is {}. A [key] \
+                     needs every field to agree, so that its type is known before \
+                     the pipe runs.",
+                    r, r.entry, name, ty, prev
+                )),
+            }
+        }
+        return Ok(agreed.expect("the object was checked non-empty"));
+    }
+
     let v = walk(&doc, r)?;
     value_type(v).ok_or_else(|| format!(
         "'{}' is {}, which is not one of BullScript's four types \
@@ -479,11 +562,49 @@ pub fn value_type(v: &serde_json::Value) -> Option<BsType> {
     }
 }
 
+/// Resolve a path's `[key]` segments against a runtime environment.
+///
+/// A key must hold a String: a field name is a String, and BullScript will not
+/// quietly turn a number into one.
+fn keys_from<'a>(env: &'a crate::lang::interp::Env) -> impl Fn(&str) -> Option<String> + 'a {
+    move |name: &str| match env.get(name) {
+        Some(crate::lang::types::Value::Str(s)) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// Walk a path with variables available, for use at run time.
+fn walk_with<'a>(
+    doc: &'a serde_json::Value,
+    r:   &DataRef,
+    env: &crate::lang::interp::Env,
+) -> Result<&'a serde_json::Value, String> {
+    let keys = keys_from(env);
+    let mut cur = doc;
+    for (i, seg) in r.path.iter().enumerate() {
+        cur = step(cur, seg, &keys, r, &r.path[..i])?;
+    }
+    Ok(cur)
+}
+
+/// The name a path's final segment resolves to.
+fn final_name(r: &DataRef, env: &crate::lang::interp::Env) -> Result<String, String> {
+    match r.path.last().expect("a DataRef always has at least one segment") {
+        PathSeg::Field(n) => Ok(n.clone()),
+        PathSeg::Key(v) => keys_from(env)(v).ok_or_else(|| format!(
+            "'{}' does not hold a String, so it cannot name a field", v
+        )),
+    }
+}
+
 /// The value of the field a `DataRef` names.
-pub fn read_field(r: &DataRef) -> Result<crate::lang::types::Value, String> {
+pub fn read_field(
+    r:   &DataRef,
+    env: &crate::lang::interp::Env,
+) -> Result<crate::lang::types::Value, String> {
     use crate::lang::types::Value;
     let doc = document(&r.entry)?;
-    let v = walk(&doc, r)?;
+    let v = walk_with(&doc, r, env)?;
     match v {
         serde_json::Value::Bool(b)   => Ok(Value::Bool(*b)),
         serde_json::Value::String(s) => Ok(Value::Str(s.clone())),
@@ -500,17 +621,40 @@ pub fn read_field(r: &DataRef) -> Result<crate::lang::types::Value, String> {
 /// The field must already exist and keep its type — both are established by
 /// the type checker before anything runs, so a failure here means the document
 /// changed underneath a running program.
-pub fn write_field(r: &DataRef, value: &crate::lang::types::Value) -> Result<(), String> {
+pub fn write_field(
+    r:     &DataRef,
+    value: &crate::lang::types::Value,
+    env:   &crate::lang::interp::Env,
+) -> Result<(), String> {
     use crate::lang::types::Value;
 
     let mut doc = document(&r.entry)?;
-    // Walk to the parent of the final field, so the field itself can be
-    // replaced in place.
+
+    // Resolve every name first, while the document is still borrowed
+    // immutably — then walk again to get the mutable slot.
+    let mut names: Vec<String> = Vec::with_capacity(r.path.len());
+    {
+        let keys = keys_from(env);
+        let mut cur = &doc;
+        for (i, seg) in r.path.iter().enumerate() {
+            let name = match seg {
+                PathSeg::Field(n) => n.clone(),
+                PathSeg::Key(v) => keys(v).ok_or_else(|| format!(
+                    "'{}' does not hold a String, so it cannot name a field", v
+                ))?,
+            };
+            // Checks the step exists and gives the same error as a read would.
+            cur = step(cur, seg, &keys, r, &r.path[..i])?;
+            names.push(name);
+        }
+    }
+    let _ = final_name(r, env)?;
+
     let mut cur = &mut doc;
-    for part in &r.path[..r.path.len() - 1] {
+    for part in &names[..names.len() - 1] {
         cur = cur.get_mut(part).ok_or_else(|| format!("'{}' has no field '{}'", r, part))?;
     }
-    let last = r.path.last().expect("a DataRef always has at least one field");
+    let last = names.last().expect("a DataRef always has at least one segment");
     let slot = cur.get_mut(last).ok_or_else(|| format!("'{}' has no field '{}'", r, last))?;
 
     *slot = match value {

@@ -99,7 +99,7 @@ fn run_pipe(pipe: &Pipe, env: &mut Env, depth: usize) -> Result<Option<Value>, B
                 Ok(Some(v))
             }
             (Binding::Data { target, .. }, Some(v)) => {
-                crate::data::write_field(target, &v).map_err(|e| BsError::at(pipe.line, e))?;
+                crate::data::write_field(target, &v, env).map_err(|e| BsError::at(pipe.line, e))?;
                 Ok(None)
             }
             (Binding::Bound { name: b, .. }, None) => Err(BsError::at(pipe.line, format!(
@@ -137,7 +137,7 @@ fn run_pipe(pipe: &Pipe, env: &mut Env, depth: usize) -> Result<Option<Value>, B
         Binding::Discard => Ok(None),
         // A write takes effect when the pipe runs, like builtin::out.
         Binding::Data { target, .. } => {
-            crate::data::write_field(target, &result).map_err(|e| BsError::at(pipe.line, e))?;
+            crate::data::write_field(target, &result, env).map_err(|e| BsError::at(pipe.line, e))?;
             Ok(None)
         }
         Binding::Bound { name, .. } => {
@@ -150,7 +150,7 @@ fn run_pipe(pipe: &Pipe, env: &mut Env, depth: usize) -> Result<Option<Value>, B
 fn resolve_input(input: &TypedInput, env: &Env) -> Result<Value, BsError> {
     match &input.expr {
         InputExpr::Lit(lit) => Ok(literal_value(lit)),
-        InputExpr::Data(r) => crate::data::read_field(r)
+        InputExpr::Data(r) => crate::data::read_field(r, env)
             .map_err(|e| BsError::at(input.line, e)),
         InputExpr::Var(name) => env.get(name).cloned().ok_or_else(|| {
             BsError::at(input.line, format!("undefined variable '{}'", name))
@@ -234,7 +234,7 @@ fn run_pipe_with_args(
                 Ok(Some(v))
             }
             (Binding::Data { target, .. }, Some(v)) => {
-                crate::data::write_field(target, &v).map_err(|e| BsError::at(pipe.line, e))?;
+                crate::data::write_field(target, &v, env).map_err(|e| BsError::at(pipe.line, e))?;
                 Ok(None)
             }
             (Binding::Bound { name: b, .. }, None) => Err(BsError::at(pipe.line, format!(
@@ -270,7 +270,7 @@ fn run_pipe_with_args(
         Binding::Discard => Ok(None),
         // A write takes effect when the pipe runs, like builtin::out.
         Binding::Data { target, .. } => {
-            crate::data::write_field(target, &result).map_err(|e| BsError::at(pipe.line, e))?;
+            crate::data::write_field(target, &result, env).map_err(|e| BsError::at(pipe.line, e))?;
             Ok(None)
         }
         Binding::Bound { name, .. } => {

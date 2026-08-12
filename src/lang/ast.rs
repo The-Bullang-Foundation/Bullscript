@@ -61,14 +61,35 @@ pub enum InputExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DataRef {
     pub entry: String,
-    pub path:  Vec<String>,
+    pub path:  Vec<PathSeg>,
+}
+
+/// One step of a data path.
+///
+/// `data::norm.c` is one `Field`; `data::norm[lang]` is one `Key`, where the
+/// field name is whatever the variable `lang` holds when the pipe runs.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PathSeg {
+    /// A field name written in the source.
+    Field(String),
+    /// A variable holding the field name.
+    Key(String),
+}
+
+impl std::fmt::Display for PathSeg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PathSeg::Field(n) => write!(f, ".{}", n),
+            PathSeg::Key(v)   => write!(f, "[{}]", v),
+        }
+    }
 }
 
 impl std::fmt::Display for DataRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "data::{}", self.entry)?;
         for part in &self.path {
-            write!(f, ".{}", part)?;
+            write!(f, "{}", part)?;
         }
         Ok(())
     }

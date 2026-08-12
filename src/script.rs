@@ -94,8 +94,13 @@ pub fn run(path: &str, args: &[String]) {
                 values.push(lang::interp::literal_value(lit));
             }
             // Read at the point the pipe runs, like any other data access.
+            //
+            // This is the first pipe, before any binding exists, so a `[key]`
+            // here has nothing to resolve against — the environment is empty.
+            // A dynamic key is for later pipes, once the parameter it reads is
+            // in scope.
             lang::ast::InputExpr::Data(r) => {
-                match crate::data::read_field(r) {
+                match crate::data::read_field(r, &lang::interp::Env::new()) {
                     Ok(v)  => values.push(v),
                     Err(e) => fail(&format!("{}: {}", path, e)),
                 }

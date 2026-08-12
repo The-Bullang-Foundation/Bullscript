@@ -79,6 +79,7 @@ fn check_pipe(
             // misspelled field, or a wrong type is caught before anything
             // runs — the same as the rest of BullScript.
             InputExpr::Data(r) => {
+                check_data_keys(r, scope, input.line)?;
                 let actual = crate::data::field_type(r)
                     .map_err(|e| BsError::at(input.line, e))?;
                 if actual != input.ty {
@@ -175,6 +176,7 @@ fn check_pipe(
         // misspelled field would silently create a new one, and catching that
         // typo here is the main thing this buys.
         Binding::Data { target, ty } => {
+            check_data_keys(target, scope, pipe.line)?;
             let existing = crate::data::field_type(target)
                 .map_err(|e| BsError::at(pipe.line, e))?;
             if existing != *ty {
@@ -225,6 +227,34 @@ fn check_args(
                 "{} '{}' argument {} expects {}, got {}",
                 kind, name, i + 1, expected, got
             )));
+        }
+    }
+    Ok(())
+}
+
+/// Every `[key]` in a path must name a String that is in scope.
+///
+/// The variable is read when the pipe runs, so it has to exist by then and
+/// hold a field name — which is a String. This is what makes
+/// `data::norm[lang]` an ordinary use of `lang`, checkable alongside every
+/// other use of it.
+fn check_data_keys(
+    r:     &DataRef,
+    scope: &HashMap<String, BsType>,
+    line:  usize,
+) -> Result<(), BsError> {
+    for seg in &r.path {
+        if let PathSeg::Key(name) = seg {
+            match scope.get(name) {
+                Some(BsType::String) => {}
+                Some(other) => return Err(BsError::at(line, format!(
+                    "'{}' holds {} — a [key] must be a String, because it names a field",
+                    name, other
+                ))),
+                None => return Err(BsError::at(line, format!(
+                    "undefined variable '{}' in '{}'", name, r
+                ))),
+            }
         }
     }
     Ok(())

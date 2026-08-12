@@ -10,7 +10,7 @@ use super::error::BsError;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     LParen, RParen, LBrace, RBrace,
-    Colon, DoubleColon, Comma, Semicolon, Arrow, Dot,
+    Colon, DoubleColon, Comma, Semicolon, Arrow, Dot, LBracket, RBracket,
 
     Plus, Minus, Star, Slash,
     EqEq, NotEq, Lt, Gt, Le, Ge, AndAnd, OrOr, Bang,
@@ -61,6 +61,10 @@ pub fn lex(src: &str) -> Result<Vec<Token>, BsError> {
             // `.` only ever separates a data entry from its field. It is not
             // a general operator: BullScript has no structs and no methods.
             '.' => { push!(Tok::Dot); i += 1; }
+            // Brackets appear only in `data::entry[key]`, where the field name
+            // comes from a variable rather than being written out.
+            '[' => { push!(Tok::LBracket); i += 1; }
+            ']' => { push!(Tok::RBracket); i += 1; }
             ':' if chars.get(i + 1) == Some(&':') => { push!(Tok::DoubleColon); i += 2; }
             ':' => { push!(Tok::Colon); i += 1; }
 

@@ -193,16 +193,26 @@ impl<'a> Parser<'a> {
         let entry = self.expect_ident("a data entry name")?;
 
         let mut path = Vec::new();
-        while self.check(&Tok::Dot) {
-            self.advance();
-            path.push(self.expect_ident("a field name after '.'")?);
+        loop {
+            if self.check(&Tok::Dot) {
+                self.advance();
+                path.push(PathSeg::Field(self.expect_ident("a field name after '.'")?));
+            } else if self.check(&Tok::LBracket) {
+                // `[key]` — the field name comes from a variable.
+                self.advance();
+                let key = self.expect_ident("a variable name inside '[ ]'")?;
+                self.expect(&Tok::RBracket, "']'")?;
+                path.push(PathSeg::Key(key));
+            } else {
+                break;
+            }
         }
 
         if path.is_empty() {
             return Err(BsError::at(line, format!(
                 "'data::{}' is a whole document, not a value. Name a field of it, \
-                 like 'data::{}.audit'.",
-                entry, entry
+                 like 'data::{}.audit', or select one with 'data::{}[key]'.",
+                entry, entry, entry
             )));
         }
         Ok(DataRef { entry, path })
@@ -334,6 +344,8 @@ fn describe(t: &Tok) -> String {
         Tok::Colon => "':'".into(),
         Tok::DoubleColon => "'::'".into(),
         Tok::Dot => "'.'".into(),
+        Tok::LBracket => "'['".into(),
+        Tok::RBracket => "']'".into(),
         Tok::Comma => "','".into(),
         Tok::Semicolon => "';'".into(),
         Tok::Arrow => "'->'".into(),
