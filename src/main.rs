@@ -1,4 +1,8 @@
 mod bag;
+// `bin` is a Rust keyword-adjacent directory name in cargo layouts, so the
+// module file is bin_store.rs while the namespace users type is `bin::`.
+#[path = "bin_store.rs"]
+mod bin_store;
 mod data;
 mod help;
 mod lang;

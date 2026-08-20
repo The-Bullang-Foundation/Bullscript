@@ -101,6 +101,9 @@ impl std::fmt::Display for DataRef {
 pub enum Callee {
     Builtin(String),
     Bag(String),
+    /// `bin::name` — a compiled program stored in the bin store. Takes any
+    /// number of String arguments and produces its exit code as an i64.
+    Bin(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

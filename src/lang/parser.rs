@@ -7,7 +7,7 @@
 //!   input_list  := input ("," input)*
 //!   input       := (literal | ident) ":" type
 //!   pipe_val    := call | expr
-//!   call        := ("builtin" | "bag") "::" ident
+//!   call        := ("builtin" | "bag" | "bin") "::" ident
 //!   binding     := "{" "}" | "{" ident ":" type "}"
 //!
 //!   expr        := logic_or
@@ -137,19 +137,19 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_pipe_val(&mut self) -> Result<PipeVal, BsError> {
-        // A call is `builtin::name` or `bag::name` — recognisable by an
-        // ident immediately followed by '::'.
+        // A call is `builtin::name`, `bag::name` or `bin::name` — recognisable
+        // by an ident immediately followed by '::'.
         if let Tok::Ident(name) = self.peek().clone() {
-            if (name == "builtin" || name == "bag")
+            if (name == "builtin" || name == "bag" || name == "bin")
                 && self.toks.get(self.pos + 1).map(|t| &t.tok) == Some(&Tok::DoubleColon)
             {
                 self.advance(); // namespace
                 self.advance(); // '::'
                 let entry = self.expect_ident("a callee name")?;
-                let callee = if name == "builtin" {
-                    Callee::Builtin(entry)
-                } else {
-                    Callee::Bag(entry)
+                let callee = match name.as_str() {
+                    "builtin" => Callee::Builtin(entry),
+                    "bin"     => Callee::Bin(entry),
+                    _         => Callee::Bag(entry),
                 };
                 return Ok(PipeVal::Call(callee));
             }

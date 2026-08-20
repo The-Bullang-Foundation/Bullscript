@@ -120,6 +120,24 @@ fn check_pipe(
             check_args("builtin", name, &params, &arg_tys, pipe.line)?;
             ret
         }
+        // A program takes any number of arguments and every one of them is a
+        // String, because that is what a process receives: argv is text. The
+        // result is the exit code, which every operating system guarantees —
+        // whatever language the program was written in.
+        PipeVal::Call(Callee::Bin(name)) => {
+            crate::bin_store::require(name).map_err(|e| BsError::at(pipe.line, e))?;
+            for (i, ty) in arg_tys.iter().enumerate() {
+                if *ty != BsType::String {
+                    return Err(BsError::at(pipe.line, format!(
+                        "'bin::{}' argument {} is {} — a program receives its arguments \
+                         as text, so every one must be a String",
+                        name, i + 1, ty
+                    )));
+                }
+            }
+            BsType::I64
+        }
+
         PipeVal::Call(Callee::Bag(name)) => {
             let sig = resolve(name).map_err(|e| BsError::at(pipe.line, e))?;
             check_args("bag entry", name, &sig.params, &arg_tys, pipe.line)?;

@@ -184,7 +184,7 @@ pub fn call(name: &str, args: &[Value]) -> Result<Value, BsError> {
             // will finish the line before its next prompt, which costs a blank
             // line after a command that ended tidily and saves a line of
             // output from a command that did not.
-            AT_LINE_START.store(false, std::sync::atomic::Ordering::Relaxed);
+            mark_terminal_dirty();
             Ok(Value::Bool(status.success()))
         }
 
@@ -217,6 +217,13 @@ static AT_LINE_START: std::sync::atomic::AtomicBool =
 /// True if the terminal cursor is at the start of a line.
 pub fn at_line_start() -> bool {
     AT_LINE_START.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Note that something we cannot see has written to the terminal — a child
+/// process that inherited it. Where it left the cursor is unknowable, so the
+/// REPL assumes the line is unfinished.
+pub fn mark_terminal_dirty() {
+    AT_LINE_START.store(false, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Note that the cursor has been returned to the start of a line by something

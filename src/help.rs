@@ -74,6 +74,23 @@ Directives (typed bare, not prefixed with anything):
         ("new text": String) : builtin::trim -> {data::prompt.audit: String};
       A field keeps the type it has in the document, and must already exist.
 
+  bin::add <path> <n> <build command>
+      Run the build command in <path>, then store the file it leaves named
+      <n> as a program. Call it from a pipe with bin::<n>: it takes any
+      number of String arguments and gives back its exit code.
+
+        ("--check": String) : bin::mytool -> {code: i64};
+
+      The program inherits your terminal, so it prints where you can see it.
+      There is no bin::export — a compiled program only runs on the machine
+      it was built for.
+
+  bin::remove <n>
+      Remove a single program.
+
+  bin::list
+      List your programs.
+
   clear
       Clear the screen, as in a shell. Your bindings, your bag and your
       history are untouched.

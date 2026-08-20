@@ -12,6 +12,7 @@ use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 
 use crate::bag;
+use crate::bin_store;
 use crate::data;
 use crate::help;
 use crate::lang;
@@ -130,6 +131,68 @@ fn handle_line(
                 Ok(false) => println!("  Added '{}' to the bag.", rest[1]),
                 Err(e)    => eprintln!("  {}", e),
             }
+        }
+        return false;
+    }
+
+    // ── bin:: directives ───────────────────────────────────────────────────
+    //
+    // Only three. A compiled program is tied to one operating system and one
+    // architecture, so there is no export or import: an archive of binaries
+    // handed to someone else would largely not run.
+
+    if line == "bin::add" || line.starts_with("bin::add ") {
+        let rest = line["bin::add".len()..].trim();
+        // The build command is everything after the name, quoting and all, so
+        // it is split off by position rather than by whitespace.
+        let mut parts = rest.splitn(3, char::is_whitespace);
+        match (parts.next(), parts.next(), parts.next()) {
+            (Some(path), Some(name), Some(build))
+                if !path.is_empty() && !name.is_empty() && !build.trim().is_empty() =>
+            {
+                // The build command is everything after the name, so quoting
+                // it is unnecessary — but it reads like a shell argument, so
+                // people quote it anyway. One layer of matching quotes is
+                // stripped; without this, `sh -c` is handed the quotes too and
+                // looks for a command whose name is the whole line.
+                let build = strip_quotes(build.trim());
+                match bin_store::add(path, name, build) {
+                    Ok(true)  => println!("  Added '{}' to your programs (replaced an existing one).", name),
+                    Ok(false) => println!("  Added '{}' to your programs.", name),
+                    Err(e)    => eprintln!("  {}", e),
+                }
+            }
+            _ => {
+                eprintln!("  Usage: bin::add <path> <name> <build command>");
+                eprintln!("         The build runs in <path> and must leave a file named <name>.");
+            }
+        }
+        return false;
+    }
+
+    if line == "bin::remove" || line.starts_with("bin::remove ") {
+        let rest: Vec<&str> = line["bin::remove".len()..].split_whitespace().collect();
+        if rest.len() != 1 {
+            eprintln!("  Usage: bin::remove <name>");
+        } else {
+            match bin_store::remove(rest[0]) {
+                Ok(true)  => println!("  Removed '{}' from your programs.", rest[0]),
+                Ok(false) => println!("  '{}' is not in your programs.", rest[0]),
+                Err(e)    => eprintln!("  {}", e),
+            }
+        }
+        return false;
+    }
+
+    if line == "bin::list" {
+        match bin_store::list() {
+            Ok(entries) if entries.is_empty() => println!("  (you have no programs)"),
+            Ok(entries) => {
+                for (name, path) in entries {
+                    println!("  {} -> {}", name, path);
+                }
+            }
+            Err(e) => eprintln!("  {}", e),
         }
         return false;
     }
@@ -323,4 +386,16 @@ fn print_bag_list() {
             }
         }
     }
+}
+
+/// Remove one layer of matching surrounding quotes, if there is one.
+fn strip_quotes(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        if (first == b'"' || first == b'\'') && bytes[bytes.len() - 1] == first {
+            return &s[1..s.len() - 1];
+        }
+    }
+    s
 }

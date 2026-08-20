@@ -118,6 +118,16 @@ fn run_pipe(pipe: &Pipe, env: &mut Env, depth: usize) -> Result<Option<Value>, B
             builtins::call(name, &args)
                 .map_err(|e| BsError::at(pipe.line, e.message))?
         }
+        PipeVal::Call(Callee::Bin(name)) => {
+            let argv: Vec<String> = args.iter().map(|v| match v {
+                Value::Str(s) => s.clone(),
+                // The checker has already established every argument is a
+                // String; this arm exists only because the type says it can.
+                other => other.to_string(),
+            }).collect();
+            Value::I64(crate::bin_store::run(name, &argv)
+                .map_err(|e| BsError::at(pipe.line, e))?)
+        }
         PipeVal::Call(Callee::Bag(name)) => {
             call_bag_entry(name, &args, pipe.line, depth)?
         }
@@ -251,6 +261,14 @@ fn run_pipe_with_args(
     let result = match &pipe.val {
         PipeVal::Call(Callee::Builtin(name)) => {
             builtins::call(name, args).map_err(|e| BsError::at(pipe.line, e.message))?
+        }
+        PipeVal::Call(Callee::Bin(name)) => {
+            let argv: Vec<String> = args.iter().map(|v| match v {
+                Value::Str(s) => s.clone(),
+                other => other.to_string(),
+            }).collect();
+            Value::I64(crate::bin_store::run(name, &argv)
+                .map_err(|e| BsError::at(pipe.line, e))?)
         }
         // Handled above.
         PipeVal::Call(Callee::Bag(_)) => unreachable!(),
