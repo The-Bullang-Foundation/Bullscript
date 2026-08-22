@@ -191,6 +191,14 @@ recording — a failed line never ends up in a saved script.
 Bindings persist across prompt lines, and history is kept between sessions
 in `~/.bullscript/history`.
 
+The prompt completes as you type. Tab lists what fits at the cursor —
+directives at the start of a line, file paths after `bag::add` and the other
+directives that take one, then inside a pipe: `builtin::`, `bag::`, `bin::`
+and `data::` names with their signatures, the top-level fields of a `data::`
+document after its dot, types after a `:`, and your bindings. When only one
+thing fits, or every candidate shares a longer prefix, the rest is shown
+dimmed after the cursor; the right arrow accepts it.
+
 ### Builtins
 
 Builtins live in a small, fixed, hardcoded table — never stored in
