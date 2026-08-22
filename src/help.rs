@@ -27,6 +27,10 @@ Use {} to discard a pipe's result instead of binding it.
 
 Types: i64, f64, bool, String. Literals include true and false.
 
+Tab completes whatever is at the cursor — directives, paths, builtin,
+bag, bin and data names, fields, types and your bindings. A dimmed hint
+shows the rest of a word when only one fits; the right arrow accepts it.
+
 Every line is fully type checked before any of it runs, so a mistake
 never leaves half its work behind.
 "#;

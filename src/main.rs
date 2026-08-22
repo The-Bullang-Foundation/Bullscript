@@ -3,6 +3,7 @@ mod bag;
 // module file is bin_store.rs while the namespace users type is `bin::`.
 #[path = "bin_store.rs"]
 mod bin_store;
+mod complete;
 mod data;
 mod help;
 mod lang;

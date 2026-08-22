@@ -5,14 +5,22 @@
 //! across lines, so a value bound by one line is available to the next until
 //! the session ends.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
+use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::history::DefaultHistory;
+use rustyline::validate::Validator;
+use rustyline::{Context, Editor, Helper};
 
 use crate::bag;
 use crate::bin_store;
+use crate::complete::{self, Completion};
 use crate::data;
 use crate::help;
 use crate::lang;
@@ -21,6 +29,108 @@ use crate::lang::types::BsType;
 use crate::record::Recorder;
 
 const PROMPT: &str = "bullscript -> ";
+
+/// The line editor, with completion and hints attached.
+type Line = Editor<BsHelper, DefaultHistory>;
+
+// ── Completion and hints ──────────────────────────────────────────────────
+
+/// The bindings in scope, shared with the line editor.
+///
+/// rustyline owns its helper, and the environment is owned by the loop, so
+/// the helper cannot borrow it. A snapshot of `(name, type)` pairs is taken
+/// after every line instead; it is what completion needs and nothing more.
+type Bindings = Arc<Mutex<Vec<(String, String)>>>;
+
+/// What rustyline asks for at the prompt: completion on Tab, a hint while
+/// typing, and how to draw the hint. All three come from `complete::complete`.
+struct BsHelper {
+    bindings: Bindings,
+    files:    FilenameCompleter,
+}
+
+impl BsHelper {
+    fn new(bindings: Bindings) -> Self {
+        BsHelper { bindings, files: FilenameCompleter::new() }
+    }
+
+    fn lookup(&self, line: &str, pos: usize) -> Completion {
+        let snapshot = self.bindings.lock().unwrap_or_else(|e| e.into_inner());
+        complete::complete(&line[..pos], &snapshot, true)
+    }
+}
+
+impl Completer for BsHelper {
+    type Candidate = Pair;
+
+    fn complete(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> rustyline::Result<(usize, Vec<Pair>)> {
+        match self.lookup(line, pos) {
+            Completion::Path => self.files.complete_path(line, pos),
+            Completion::Words { start, candidates } => Ok((
+                start,
+                candidates.into_iter().map(|c| {
+                    // Shown in the list with its signature or type, inserted
+                    // without it.
+                    let display = match &c.detail {
+                        Some(d) => format!("{}  {}", c.label, d),
+                        None    => c.label.clone(),
+                    };
+                    Pair { display, replacement: c.label }
+                }).collect(),
+            )),
+            Completion::None => Ok((pos, Vec::new())),
+        }
+    }
+}
+
+impl Hinter for BsHelper {
+    type Hint = String;
+
+    /// The greyed-out rest of the word, as fish does. Only shown while the
+    /// cursor is at the end of the line and only when the candidates agree:
+    /// a single match gives its tail, several give their common prefix if it
+    /// is longer than what has been typed, and anything less stays quiet —
+    /// a hint that is wrong more often than right is noise.
+    fn hint(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> Option<String> {
+        if pos < line.len() || line.is_empty() {
+            return None;
+        }
+        let Completion::Words { start, candidates } = self.lookup(line, pos) else {
+            return None;
+        };
+        let typed = &line[start..];
+        if typed.is_empty() {
+            return None;
+        }
+        let common = candidates.iter().skip(1).fold(candidates[0].label.as_str(), |acc, c| {
+            let n = acc.bytes().zip(c.label.bytes()).take_while(|(a, b)| a == b).count();
+            &acc[..n]
+        });
+        let rest = &common[typed.len()..];
+        if rest.is_empty() { None } else { Some(rest.to_string()) }
+    }
+}
+
+impl Highlighter for BsHelper {
+    fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
+        // Dim, reset after. Windows Terminal and every modern Unix terminal
+        // read these; an older console shows the hint undimmed, which is
+        // still readable.
+        Cow::Owned(format!("\x1b[2m{}\x1b[0m", hint))
+    }
+}
+
+impl Validator for BsHelper {}
+impl Helper for BsHelper {}
+
+/// Refresh the editor's view of the bindings after a line has run.
+fn snapshot_bindings(env: &Env, bindings: &Bindings) {
+    let mut snap: Vec<(String, String)> = env.iter()
+        .map(|(n, v)| (n.clone(), v.ty().to_string()))
+        .collect();
+    snap.sort();
+    *bindings.lock().unwrap_or_else(|e| e.into_inner()) = snap;
+}
 
 /// Clear the screen and put the cursor at the top left.
 ///
@@ -36,13 +146,15 @@ fn clear_screen() {
 }
 
 pub fn run() {
-    let mut rl = match DefaultEditor::new() {
+    let mut rl: Line = match Editor::new() {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Could not start the line editor: {}", e);
             std::process::exit(1);
         }
     };
+    let bindings: Bindings = Arc::new(Mutex::new(Vec::new()));
+    rl.set_helper(Some(BsHelper::new(Arc::clone(&bindings))));
 
     let history = history_path();
     if let Some(ref p) = history {
@@ -75,6 +187,7 @@ pub fn run() {
         if handle_line(line, &mut env, &mut recorder, &mut rl) {
             break;
         }
+        snapshot_bindings(&env, &bindings);
 
         // `builtin::out` appends nothing, so a pipe can leave the cursor
         // part-way along a line. rustyline draws its next prompt with a
@@ -97,7 +210,7 @@ fn handle_line(
     line:     &str,
     env:      &mut Env,
     recorder: &mut Recorder,
-    rl:       &mut DefaultEditor,
+    rl:       &mut Line,
 ) -> bool {
     match line {
         "help" => { help::run(); return false; }
@@ -344,7 +457,7 @@ fn run_line(line: &str, env: &mut Env) -> bool {
     }
 }
 
-fn quit(recorder: &mut Recorder, rl: &mut DefaultEditor, history: Option<&PathBuf>) {
+fn quit(recorder: &mut Recorder, rl: &mut Line, history: Option<&PathBuf>) {
     recorder.discard_on_exit();
     lang::builtins::close_all_fds();
     if let Some(p) = history {
