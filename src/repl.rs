@@ -470,8 +470,7 @@ fn quit(recorder: &mut Recorder, rl: &mut Line, history: Option<&PathBuf>) {
 }
 
 fn history_path() -> Option<PathBuf> {
-    bag::scripts_dir().ok()
-        .and_then(|d| d.parent().map(|p| p.join("history")))
+    crate::registry::Registry::root().ok().map(|d| d.join("history"))
 }
 
 fn print_bag_list() {

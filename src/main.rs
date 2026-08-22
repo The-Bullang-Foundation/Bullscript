@@ -9,6 +9,7 @@ mod help;
 mod lang;
 mod lsp;
 mod record;
+mod registry;
 mod repl;
 mod script;
 

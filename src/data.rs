@@ -16,106 +16,24 @@
 //! `data::` directive refreshes that cache, so the store is current without a
 //! restart and without re-reading on every field access.
 
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-// ── Locations ─────────────────────────────────────────────────────────────
+use crate::registry::Registry;
 
-fn store_dir() -> Result<PathBuf, String> {
-    // HOME on Unix; USERPROFILE is the Windows equivalent and HOME is
-    // normally unset there. Falling back to a relative path would silently
-    // put the store in whatever directory the user happened to launch from.
-    let home = std::env::var("HOME").ok()
-        .filter(|h| !h.is_empty())
-        .or_else(|| std::env::var("USERPROFILE").ok().filter(|h| !h.is_empty()));
+/// The data store is a registry of `.json` documents.
+pub const REGISTRY: Registry = Registry {
+    prefix:    "data",
+    files_dir: "data",
+    extension: Some("json"),
+    noun:      "data entry",
+    whole:     "your data store",
+};
 
-    match home {
-        Some(h) => Ok(PathBuf::from(h).join(".bullscript")),
-        None => Err(
-            "cannot locate your home directory: neither HOME nor USERPROFILE is set, \
-             so BullScript does not know where to keep your data".to_string()
-        ),
-    }
-}
-
-fn data_json_path() -> Result<PathBuf, String> {
-    Ok(store_dir()?.join("data.json"))
-}
-
-/// Where the store keeps its own copy of every registered document.
-pub fn files_dir() -> Result<PathBuf, String> {
-    Ok(store_dir()?.join("data"))
-}
-
-// ── Name validation ───────────────────────────────────────────────────────
-
-/// Data entry names must be BullScript identifiers.
-///
-/// This is what stops `data::add file.json ../../etc/thing` from writing
-/// outside the data directory, and it also rules out names like `my entry`
-/// that could never be typed back as `data::my entry.field`.
 pub fn validate_name(name: &str) -> Result<(), String> {
-    if name.is_empty() {
-        return Err("a data entry name cannot be empty".to_string());
-    }
-    let mut chars = name.chars();
-    let first = chars.next().unwrap();
-    if !(first.is_ascii_alphabetic() || first == '_') {
-        return Err(format!(
-            "'{}' is not a valid entry name: it must start with a letter or underscore", name
-        ));
-    }
-    if let Some(bad) = chars.find(|c| !(c.is_ascii_alphanumeric() || *c == '_')) {
-        return Err(format!(
-            "'{}' is not a valid entry name: '{}' is not allowed — use letters, digits \
-             and underscores only", name, bad
-        ));
-    }
-    if name == "true" || name == "false" {
-        return Err(format!("'{}' is a reserved word and cannot be an entry name", name));
-    }
-    Ok(())
-}
-
-// ── Registry file ─────────────────────────────────────────────────────────
-
-fn load() -> Result<BTreeMap<String, String>, String> {
-    let path = data_json_path()?;
-    let content = match fs::read_to_string(&path) {
-        Ok(c) => c,
-        // No file yet simply means an empty store.
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
-        Err(e) => return Err(format!("could not read {}: {}", path.display(), e)),
-    };
-
-    if content.trim().is_empty() {
-        return Ok(BTreeMap::new());
-    }
-
-    // A file that exists but cannot be read is never treated as an empty
-    // store: the next save would write that emptiness back and destroy every
-    // entry.
-    serde_json::from_str(&content).map_err(|_| format!(
-        "your data list at {} is damaged and cannot be read.\n  \
-         BullScript will not overwrite it, so nothing has been lost yet.\n  \
-         Open the file to repair it, or delete it to start with an empty store.",
-        path.display()
-    ))
-}
-
-fn save(map: &BTreeMap<String, String>) -> Result<(), String> {
-    let dir = store_dir()?;
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("could not create {}: {}", dir.display(), e))?;
-    let path = data_json_path()?;
-    let content = serde_json::to_string_pretty(map)
-        .map_err(|e| format!("could not encode the data list: {}", e))?;
-    fs::write(&path, content)
-        .map_err(|e| format!("could not write {}: {}", path.display(), e))
+    REGISTRY.validate_name(name)
 }
 
 // ── Parsed-document cache ─────────────────────────────────────────────────
@@ -140,7 +58,7 @@ pub fn document(name: &str) -> Result<serde_json::Value, String> {
         }
     }
 
-    let path = resolve(name)?.ok_or_else(|| format!(
+    let path = REGISTRY.resolve(name)?.ok_or_else(|| format!(
         "'{}' is not in your data store — run `data::list` to see what is", name
     ))?;
     let content = fs::read_to_string(&path)
@@ -159,7 +77,7 @@ pub fn document(name: &str) -> Result<serde_json::Value, String> {
 /// takes effect when it runs, the same as `builtin::out`. A program that fails
 /// halfway therefore leaves the writes that already happened in place.
 pub fn write_document(name: &str, doc: &serde_json::Value) -> Result<(), String> {
-    let path = resolve(name)?.ok_or_else(|| format!(
+    let path = REGISTRY.resolve(name)?.ok_or_else(|| format!(
         "'{}' is not in your data store", name
     ))?;
     let content = serde_json::to_string_pretty(doc)
@@ -209,41 +127,14 @@ pub fn add(path: &str, name: &str) -> Result<bool, String> {
 /// Write `content` into the store's data directory under `name` and register
 /// it.
 pub fn store(name: &str, content: &str) -> Result<bool, String> {
-    validate_name(name)?;
-
-    let dir = files_dir()?;
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("could not create {}: {}", dir.display(), e))?;
-    let dest = dir.join(format!("{}.json", name));
-    fs::write(&dest, content)
-        .map_err(|e| format!("could not write {}: {}", dest.display(), e))?;
-
-    let mut map = load()?;
-    let replaced = map.insert(name.to_string(), dest.display().to_string()).is_some();
-    save(&map)?;
+    let replaced = REGISTRY.store_text(name, content)?;
     invalidate_cache();
     Ok(replaced)
 }
 
 /// Remove a single entry by name. Returns false if it wasn't present.
 pub fn remove(name: &str) -> Result<bool, String> {
-    let mut map = load()?;
-    let existed = match map.remove(name) {
-        Some(stored) => {
-            // Only delete the file if it lives in our own data directory.
-            if let Ok(dir) = files_dir() {
-                let p = PathBuf::from(&stored);
-                if p.starts_with(&dir) {
-                    let _ = fs::remove_file(&p);
-                }
-            }
-            true
-        }
-        None => false,
-    };
-    if existed {
-        save(&map)?;
-    }
+    let existed = REGISTRY.remove(name)?;
     invalidate_cache();
     Ok(existed)
 }
@@ -251,13 +142,28 @@ pub fn remove(name: &str) -> Result<bool, String> {
 /// List the entries in the store.
 pub fn list() -> Result<Vec<(String, String)>, String> {
     invalidate_cache();
-    Ok(load()?.into_iter().collect())
+    REGISTRY.list()
 }
 
-/// Resolve a data entry name to the stored file path.
-pub fn resolve(name: &str) -> Result<Option<PathBuf>, String> {
-    Ok(load()?.get(name).map(PathBuf::from))
+// ── Sharing ───────────────────────────────────────────────────────────────
+
+/// Write every entry into a zip at `path`.
+pub fn export(path: &str) -> Result<(usize, PathBuf), String> {
+    REGISTRY.export(path)
 }
+
+/// Read every `.json` file in the zip at `path` into the store.
+///
+/// Returns (added, replaced, skipped) — skipped being files whose name could
+/// not be an entry name, or whose content is not a JSON object.
+pub fn import(path: &str) -> Result<(usize, usize, Vec<String>), String> {
+    let result = REGISTRY.import(path, |src| {
+        serde_json::from_str::<serde_json::Value>(src).map(|v| v.is_object()).unwrap_or(false)
+    });
+    invalidate_cache();
+    result
+}
+
 
 /// What a JSON value is, for an error message.
 pub fn json_kind(v: &serde_json::Value) -> &'static str {
@@ -268,144 +174,6 @@ pub fn json_kind(v: &serde_json::Value) -> &'static str {
         serde_json::Value::String(_) => "string",
         serde_json::Value::Array(_)  => "array",
         serde_json::Value::Object(_) => "object",
-    }
-}
-
-// ── Sharing a data store ──────────────────────────────────────────────────
-//
-// The same pair as the bag's, for the same reason: a store you can hand to
-// someone. `data::export` writes every document into one zip; `data::import`
-// reads such a zip into another store.
-//
-// An imported archive is trusted in the same sense — its documents are copied
-// in as they are. They are still parsed on the way in, because `data::add`
-// parses too and an entry that is not JSON could never be read from.
-
-/// The name given to an archive when the export path names a directory.
-const DEFAULT_ARCHIVE: &str = "bullscript-data.zip";
-
-/// Write every entry into a zip at `path`.
-pub fn export(path: &str) -> Result<(usize, PathBuf), String> {
-    let entries = load()?;
-    if entries.is_empty() {
-        return Err("your data store is empty — there is nothing to export".to_string());
-    }
-
-    let dest = archive_destination(path);
-    if let Some(parent) = dest.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("could not create {}: {}", parent.display(), e))?;
-        }
-    }
-
-    let file = fs::File::create(&dest)
-        .map_err(|e| format!("could not create {}: {}", dest.display(), e))?;
-    let mut zip = zip::ZipWriter::new(file);
-    let options: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-
-    let mut written = 0usize;
-    for (name, stored) in &entries {
-        // An entry whose file has gone missing is reported rather than
-        // silently dropped: an export that quietly loses documents is worse
-        // than one that fails.
-        let content = fs::read_to_string(stored).map_err(|e| format!(
-            "could not read the data for '{}' at {}: {}\n  \
-             The entry exists but its file does not. Remove it with \
-             `data::remove {}` or re-add it.",
-            name, stored, e, name
-        ))?;
-
-        zip.start_file(format!("{}.json", name), options)
-            .map_err(|e| format!("could not add '{}' to the archive: {}", name, e))?;
-        io::Write::write_all(&mut zip, content.as_bytes())
-            .map_err(|e| format!("could not write '{}' into the archive: {}", name, e))?;
-        written += 1;
-    }
-
-    zip.finish()
-        .map_err(|e| format!("could not finish writing {}: {}", dest.display(), e))?;
-    Ok((written, dest))
-}
-
-/// Read every `.json` file in the zip at `path` into the store.
-///
-/// Returns (added, replaced, skipped) — skipped being entries whose name
-/// could not be an entry name, or whose content is not a JSON object.
-pub fn import(path: &str) -> Result<(usize, usize, Vec<String>), String> {
-    let file = fs::File::open(path)
-        .map_err(|e| format!("could not open '{}': {}", path, e))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| format!("'{}' is not a readable zip archive: {}", path, e))?;
-
-    let mut added    = 0usize;
-    let mut replaced = 0usize;
-    let mut skipped  = Vec::new();
-
-    for i in 0..archive.len() {
-        let mut entry = archive.by_index(i)
-            .map_err(|e| format!("could not read entry {} of '{}': {}", i, path, e))?;
-        if entry.is_dir() {
-            continue;
-        }
-
-        // The archive's own path is not consulted — only the file name.
-        let raw = entry.name().to_string();
-        let file_name = Path::new(&raw)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-
-        let Some(stem) = file_name.strip_suffix(".json") else {
-            continue;
-        };
-
-        // The name still has to be usable as `data::<name>.field`, so it must
-        // be an identifier. This is not a trust check — an entry that cannot
-        // be named cannot be read from.
-        if validate_name(stem).is_err() {
-            skipped.push(file_name);
-            continue;
-        }
-
-        let mut content = String::new();
-        io::Read::read_to_string(&mut entry, &mut content)
-            .map_err(|e| format!("could not read '{}' from the archive: {}", file_name, e))?;
-
-        // Not a trust check either: a document that is not a JSON object has
-        // no named fields, so nothing could ever read from it.
-        match serde_json::from_str::<serde_json::Value>(&content) {
-            Ok(v) if v.is_object() => {}
-            _ => {
-                skipped.push(file_name);
-                continue;
-            }
-        }
-
-        if store(stem, &content)? {
-            replaced += 1;
-        } else {
-            added += 1;
-        }
-    }
-
-    if added == 0 && replaced == 0 && skipped.is_empty() {
-        return Err(format!("'{}' contains no .json documents", path));
-    }
-    Ok((added, replaced, skipped))
-}
-
-/// Where an export should write, given what the user typed.
-fn archive_destination(path: &str) -> PathBuf {
-    let p = PathBuf::from(path);
-    if p.is_dir() {
-        return p.join(DEFAULT_ARCHIVE);
-    }
-    match p.extension().and_then(|e| e.to_str()) {
-        Some(ext) if ext.eq_ignore_ascii_case("zip") => p,
-        _ => PathBuf::from(format!("{}.zip", path)),
     }
 }
 
