@@ -227,201 +227,21 @@ fn handle_line(
             recorder.end(&mut ask);
             return false;
         }
-        "bag::list" => { print_bag_list(); return false; }
         _ => {}
     }
 
-    // Directives are matched before the pipe parser so that a bare or
+    // Store directives are matched before the pipe parser so that a bare or
     // malformed directive gets its usage message rather than a parse error
     // about an unexpected identifier.
-    if line == "bag::add" || line.starts_with("bag::add ") {
-        let rest: Vec<&str> = line["bag::add".len()..].split_whitespace().collect();
-        if rest.len() != 2 {
-            eprintln!("  Usage: bag::add <path/to/script.busc> <name>");
-        } else {
-            match bag::add(rest[0], rest[1]) {
-                Ok(true)  => println!("  Added '{}' to the bag (replaced an existing entry).", rest[1]),
-                Ok(false) => println!("  Added '{}' to the bag.", rest[1]),
-                Err(e)    => eprintln!("  {}", e),
+    let mut words = line.split_whitespace();
+    let first = words.next().unwrap_or("");
+    if let Some((prefix, op)) = first.split_once("::") {
+        if let Some(store) = STORES.iter().find(|s| s.prefix == prefix) {
+            let args: Vec<&str> = words.collect();
+            if store.directive(op, &args) {
+                return false;
             }
         }
-        return false;
-    }
-
-    // ── bin:: directives ───────────────────────────────────────────────────
-    //
-    // Only three. A compiled program is tied to one operating system and one
-    // architecture, so there is no export or import: an archive of binaries
-    // handed to someone else would largely not run.
-
-    if line == "bin::add" || line.starts_with("bin::add ") {
-        let rest: Vec<&str> = line["bin::add".len()..].split_whitespace().collect();
-        if rest.len() != 2 {
-            eprintln!("  Usage: bin::add <path/to/program> <n>");
-        } else {
-            match bin_store::add(rest[0], rest[1]) {
-                Ok(true)  => println!("  Added '{}' to your programs (replaced an existing one).", rest[1]),
-                Ok(false) => println!("  Added '{}' to your programs.", rest[1]),
-                Err(e)    => eprintln!("  {}", e),
-            }
-        }
-        return false;
-    }
-
-    if line == "bin::remove" || line.starts_with("bin::remove ") {
-        let rest: Vec<&str> = line["bin::remove".len()..].split_whitespace().collect();
-        if rest.len() != 1 {
-            eprintln!("  Usage: bin::remove <name>");
-        } else {
-            match bin_store::remove(rest[0]) {
-                Ok(true)  => println!("  Removed '{}' from your programs.", rest[0]),
-                Ok(false) => println!("  '{}' is not in your programs.", rest[0]),
-                Err(e)    => eprintln!("  {}", e),
-            }
-        }
-        return false;
-    }
-
-    if line == "bin::list" {
-        match bin_store::list() {
-            Ok(entries) if entries.is_empty() => println!("  (you have no programs)"),
-            Ok(entries) => {
-                for (name, path) in entries {
-                    println!("  {} -> {}", name, path);
-                }
-            }
-            Err(e) => eprintln!("  {}", e),
-        }
-        return false;
-    }
-
-    // ── data:: directives ────────────────────────────────────────────────
-    //
-    // The same five as the bag's, differing only in what they hold. The bag
-    // stores scripts you call; the store holds JSON documents you read fields
-    // out of with `data::name.field`.
-
-    if line == "data::add" || line.starts_with("data::add ") {
-        let rest: Vec<&str> = line["data::add".len()..].split_whitespace().collect();
-        if rest.len() != 2 {
-            eprintln!("  Usage: data::add <path/to/file.json> <name>");
-        } else {
-            match data::add(rest[0], rest[1]) {
-                Ok(true)  => println!("  Added '{}' to your data (replaced an existing entry).", rest[1]),
-                Ok(false) => println!("  Added '{}' to your data.", rest[1]),
-                Err(e)    => eprintln!("  {}", e),
-            }
-        }
-        return false;
-    }
-
-    if line == "data::remove" || line.starts_with("data::remove ") {
-        let rest: Vec<&str> = line["data::remove".len()..].split_whitespace().collect();
-        if rest.len() != 1 {
-            eprintln!("  Usage: data::remove <name>");
-        } else {
-            match data::remove(rest[0]) {
-                Ok(true)  => println!("  Removed '{}' from your data.", rest[0]),
-                Ok(false) => println!("  '{}' is not in your data.", rest[0]),
-                Err(e)    => eprintln!("  {}", e),
-            }
-        }
-        return false;
-    }
-
-    if line == "data::list" {
-        match data::list() {
-            Ok(entries) if entries.is_empty() => println!("  (your data is empty)"),
-            Ok(entries) => {
-                for (name, path) in entries {
-                    println!("  {} -> {}", name, path);
-                }
-            }
-            Err(e) => eprintln!("  {}", e),
-        }
-        return false;
-    }
-
-    if line == "data::export" || line.starts_with("data::export ") {
-        let rest: Vec<&str> = line["data::export".len()..].split_whitespace().collect();
-        if rest.len() != 1 {
-            eprintln!("  Usage: data::export <path/to/archive.zip>");
-        } else {
-            match data::export(rest[0]) {
-                Ok((n, dest)) => println!("  Exported {} document(s) to {}.", n, dest.display()),
-                Err(e)        => eprintln!("  {}", e),
-            }
-        }
-        return false;
-    }
-
-    if line == "data::import" || line.starts_with("data::import ") {
-        let rest: Vec<&str> = line["data::import".len()..].split_whitespace().collect();
-        if rest.len() != 1 {
-            eprintln!("  Usage: data::import <path/to/archive.zip>");
-        } else {
-            match data::import(rest[0]) {
-                Ok((added, replaced, skipped)) => {
-                    println!("  Imported {} document(s), replaced {}.", added, replaced);
-                    for name in &skipped {
-                        eprintln!("  Skipped '{}': its name cannot be used as a data entry, \
-                                   or it is not a JSON object.", name);
-                    }
-                }
-                Err(e) => eprintln!("  {}", e),
-            }
-        }
-        return false;
-    }
-
-    if line == "bag::export" || line.starts_with("bag::export ") {
-        let rest: Vec<&str> = line["bag::export".len()..].split_whitespace().collect();
-        if rest.len() != 1 {
-            eprintln!("  Usage: bag::export <path/to/archive.zip>");
-        } else {
-            match bag::export(rest[0]) {
-                Ok((n, dest)) => println!(
-                    "  Exported {} script(s) to {}.", n, dest.display()
-                ),
-                Err(e) => eprintln!("  {}", e),
-            }
-        }
-        return false;
-    }
-
-    if line == "bag::import" || line.starts_with("bag::import ") {
-        let rest: Vec<&str> = line["bag::import".len()..].split_whitespace().collect();
-        if rest.len() != 1 {
-            eprintln!("  Usage: bag::import <path/to/archive.zip>");
-        } else {
-            match bag::import(rest[0]) {
-                Ok((added, replaced, skipped)) => {
-                    println!("  Imported {} script(s), replaced {}.", added, replaced);
-                    for name in &skipped {
-                        eprintln!(
-                            "  Skipped '{}': its name cannot be used as a bag entry.",
-                            name
-                        );
-                    }
-                }
-                Err(e) => eprintln!("  {}", e),
-            }
-        }
-        return false;
-    }
-
-    if line == "bag::remove" || line.starts_with("bag::remove ") {
-        let rest: Vec<&str> = line["bag::remove".len()..].split_whitespace().collect();
-        if rest.len() != 1 {
-            eprintln!("  Usage: bag::remove <name>");
-        } else {
-            match bag::remove(rest[0]) {
-                Ok(true)  => println!("  Removed '{}' from the bag.", rest[0]),
-                Ok(false) => eprintln!("  No bag entry named '{}'.", rest[0]),
-                Err(e)    => eprintln!("  {}", e),
-            }
-        }
-        return false;
     }
 
     // Anything else is a pipe (or several).
@@ -430,6 +250,152 @@ fn handle_line(
         recorder.capture(line);
     }
     false
+}
+
+// ── Store directives ──────────────────────────────────────────────────────
+//
+// The bag, the data store and the bin store accept the same directives —
+// add, remove, list, and for the two whose files travel, export and import.
+// Each store is one row here; the handling is written once.
+
+/// What the prompt needs to know about a store to run its directives.
+struct Store {
+    /// The namespace users type: `bag`, `data`, `bin`.
+    prefix: &'static str,
+    /// One thing it holds, for counts: "script", "document", "program".
+    item: &'static str,
+    /// The store itself, for messages: "the bag", "your data".
+    whole: &'static str,
+    /// What `add` expects as its first argument, for the usage line.
+    add_path: &'static str,
+    /// Printed when `list` has nothing to show.
+    empty: &'static str,
+    add:    fn(&str, &str) -> Result<bool, String>,
+    remove: fn(&str) -> Result<bool, String>,
+    list:   fn() -> Result<Vec<(String, String)>, String>,
+    /// None for a store whose files do not travel.
+    export: Option<fn(&str) -> Result<(usize, PathBuf), String>>,
+    import: Option<fn(&str) -> Result<(usize, usize, Vec<String>), String>>,
+}
+
+const STORES: &[Store] = &[
+    Store {
+        prefix:   "bag",
+        item:     "script",
+        whole:    "the bag",
+        add_path: "<path/to/script.busc>",
+        empty:    "(bag is empty)",
+        add:      bag::add,
+        remove:   bag::remove,
+        list:     bag::list,
+        export:   Some(bag::export),
+        import:   Some(bag::import),
+    },
+    Store {
+        prefix:   "data",
+        item:     "document",
+        whole:    "your data",
+        add_path: "<path/to/file.json>",
+        empty:    "(your data is empty)",
+        add:      data::add,
+        remove:   data::remove,
+        list:     data::list,
+        export:   Some(data::export),
+        import:   Some(data::import),
+    },
+    // A compiled program is tied to one operating system and one
+    // architecture, so there is no export or import: an archive of binaries
+    // handed to someone else would largely not run.
+    Store {
+        prefix:   "bin",
+        item:     "program",
+        whole:    "your programs",
+        add_path: "<path/to/program>",
+        empty:    "(you have no programs)",
+        add:      bin_store::add,
+        remove:   bin_store::remove,
+        list:     bin_store::list,
+        export:   None,
+        import:   None,
+    },
+];
+
+impl Store {
+    /// Run `op` with `args`. Returns false if `op` is not a directive of this
+    /// store, so the line falls through to the pipe parser.
+    fn directive(&self, op: &str, args: &[&str]) -> bool {
+        match op {
+            "add" => {
+                if args.len() != 2 {
+                    eprintln!("  Usage: {}::add {} <name>", self.prefix, self.add_path);
+                    return true;
+                }
+                match (self.add)(args[0], args[1]) {
+                    Ok(true)  => println!("  Added '{}' to {} (replaced an existing entry).", args[1], self.whole),
+                    Ok(false) => println!("  Added '{}' to {}.", args[1], self.whole),
+                    Err(e)    => eprintln!("  {}", e),
+                }
+            }
+            "remove" => {
+                if args.len() != 1 {
+                    eprintln!("  Usage: {}::remove <name>", self.prefix);
+                    return true;
+                }
+                match (self.remove)(args[0]) {
+                    Ok(true)  => println!("  Removed '{}' from {}.", args[0], self.whole),
+                    Ok(false) => eprintln!("  '{}' is not in {}.", args[0], self.whole),
+                    Err(e)    => eprintln!("  {}", e),
+                }
+            }
+            "list" => {
+                if !args.is_empty() {
+                    eprintln!("  Usage: {}::list", self.prefix);
+                    return true;
+                }
+                match (self.list)() {
+                    Ok(entries) if entries.is_empty() => println!("  {}", self.empty),
+                    Ok(entries) => {
+                        for (name, path) in entries {
+                            println!("  {} -> {}", name, path);
+                        }
+                    }
+                    Err(e) => eprintln!("  {}", e),
+                }
+            }
+            "export" => {
+                let Some(export) = self.export else { return false };
+                if args.len() != 1 {
+                    eprintln!("  Usage: {}::export <path/to/archive.zip>", self.prefix);
+                    return true;
+                }
+                match export(args[0]) {
+                    Ok((n, dest)) => println!("  Exported {} {}(s) to {}.", n, self.item, dest.display()),
+                    Err(e)        => eprintln!("  {}", e),
+                }
+            }
+            "import" => {
+                let Some(import) = self.import else { return false };
+                if args.len() != 1 {
+                    eprintln!("  Usage: {}::import <path/to/archive.zip>", self.prefix);
+                    return true;
+                }
+                match import(args[0]) {
+                    Ok((added, replaced, skipped)) => {
+                        println!("  Imported {} {}(s), replaced {}.", added, self.item, replaced);
+                        for name in &skipped {
+                            eprintln!(
+                                "  Skipped '{}': its name cannot be an entry name, or its \
+                                 content is not a {}.", name, self.item
+                            );
+                        }
+                    }
+                    Err(e) => eprintln!("  {}", e),
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
 }
 
 /// Parse, check and run one line. Returns true on success.
@@ -473,14 +439,26 @@ fn history_path() -> Option<PathBuf> {
     crate::registry::Registry::root().ok().map(|d| d.join("history"))
 }
 
-fn print_bag_list() {
-    match bag::list() {
-        Err(e) => eprintln!("  {}", e),
-        Ok(entries) if entries.is_empty() => println!("  (bag is empty)"),
-        Ok(entries) => {
-            for (name, path) in entries {
-                println!("  {} -> {}", name, path);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The directives the prompt accepts and the ones completion offers are
+    /// two lists; this is what keeps them the same list.
+    #[test]
+    fn directives_match_completion() {
+        let fixed = ["help", "clear", "exit", "record::start", "record::end"];
+        let mut handled: Vec<String> = fixed.iter().map(|s| s.to_string()).collect();
+        for store in STORES {
+            for op in ["add", "remove", "list"] {
+                handled.push(format!("{}::{}", store.prefix, op));
             }
+            if store.export.is_some() { handled.push(format!("{}::export", store.prefix)); }
+            if store.import.is_some() { handled.push(format!("{}::import", store.prefix)); }
         }
+        let mut offered: Vec<String> = complete::DIRECTIVES.iter().map(|s| s.to_string()).collect();
+        handled.sort();
+        offered.sort();
+        assert_eq!(handled, offered);
     }
 }
