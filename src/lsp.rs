@@ -204,15 +204,9 @@ fn diagnostics_notification(uri: &str, items: &str) -> String {
 /// and parser stop at the first error rather than recovering, so claiming to
 /// report more would mean inventing them.
 fn check(source: &str, uri: &str) -> String {
-    // A bag entry's signature is needed to type a `bag::` call. Resolving it
-    // has to work here exactly as it does at the prompt, or a script that runs
-    // would show errors in the editor.
     let err = match lang::parse_source(source) {
         Err(e) => Some(e),
-        Ok(program) => {
-            lang::check::check_program(&program, &HashMap::new(), &|n| crate::bag::signature(n))
-                .err()
-        }
+        Ok(program) => lang::check_with_bag(&program, &HashMap::new()).err(),
     };
 
     let Some(err) = err else { return String::new() };

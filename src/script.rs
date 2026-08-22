@@ -30,46 +30,53 @@
 use std::collections::HashMap;
 use std::process;
 
-use crate::bag;
 use crate::lang;
+use crate::lang::ast::{InputExpr, TypedInput};
 use crate::lang::interp::{self, Env};
 use crate::lang::types::Value;
 
-pub fn run(path: &str, args: &[String]) {
-    let src = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => fail(&format!("could not read '{}': {}", path, e)),
-    };
+/// Run the script at `path`, print its result, and exit.
+///
+/// Descriptors the script opened are closed exactly once, whether it
+/// finished or failed, and before the process exits — `process::exit` runs
+/// no destructors, so this cannot be left to a guard.
+pub fn run(path: &str, args: &[String]) -> ! {
+    let outcome = execute(path, args);
+    lang::builtins::close_all_fds();
+    match outcome {
+        // The value alone, so `$(bullscript x.busc)` is the value. A script
+        // that ends in a discard prints nothing.
+        Ok(Some(v)) => { println!("{}", v); process::exit(0) }
+        Ok(None)    => process::exit(0),
+        Err(e)      => { eprintln!("{}: {}", path, e); process::exit(1) }
+    }
+}
 
-    let program = match lang::parse_source(&src) {
-        Ok(p) => p,
-        Err(e) => fail(&format!("{}: {}", path, e)),
-    };
+fn execute(path: &str, args: &[String]) -> Result<Option<Value>, String> {
+    let src = std::fs::read_to_string(path)
+        .map_err(|e| format!("could not read: {}", e))?;
 
+    let program = lang::parse_source(&src).map_err(|e| e.to_string())?;
     if program.is_empty() {
-        fail(&format!("{}: the script contains no pipes", path));
+        return Err("the script contains no pipes".to_string());
     }
 
     // Static pass: everything checkable is checked before anything runs.
-    if let Err(e) = lang::check::check_program(&program, &HashMap::new(), &|n| bag::signature(n)) {
-        fail(&format!("{}: {}", path, e));
-    }
+    lang::check_with_bag(&program, &HashMap::new()).map_err(|e| e.to_string())?;
 
     let expected = &program[0].inputs;
 
-    // Only the named slots are parameters.
-    let params: Vec<&lang::ast::TypedInput> = expected.iter()
-        // Named slots only. A literal and a data field are values the script
-        // already carries, so neither is a command-line parameter.
-        .filter(|i| matches!(i.expr, lang::ast::InputExpr::Var(_)))
+    // Named slots only. A literal and a data field are values the script
+    // already carries, so neither is a command-line parameter.
+    let params: Vec<&TypedInput> = expected.iter()
+        .filter(|i| matches!(i.expr, InputExpr::Var(_)))
         .collect();
 
     if args.len() != params.len() {
         let names: Vec<String> = params.iter()
             .map(|i| match &i.expr {
-                lang::ast::InputExpr::Var(n) => format!("<{}: {}>", n, i.ty),
-                lang::ast::InputExpr::Lit(_) | lang::ast::InputExpr::Data(_) =>
-                unreachable!("filtered above"),
+                InputExpr::Var(n) => format!("<{}: {}>", n, i.ty),
+                InputExpr::Lit(_) | InputExpr::Data(_) => unreachable!("filtered above"),
             })
             .collect();
         let usage = if names.is_empty() {
@@ -77,9 +84,8 @@ pub fn run(path: &str, args: &[String]) {
         } else {
             format!("usage: bullscript {} {}", path, names.join(" "))
         };
-        fail(&format!(
-            "{} expects {} argument(s), got {}\n  {}",
-            path, params.len(), args.len(), usage
+        return Err(format!(
+            "expects {} argument(s), got {}\n  {}", params.len(), args.len(), usage
         ));
     }
 
@@ -90,54 +96,20 @@ pub fn run(path: &str, args: &[String]) {
     let mut next_arg = args.iter();
     for input in expected {
         match &input.expr {
-            lang::ast::InputExpr::Lit(lit) => {
-                values.push(lang::interp::literal_value(lit));
-            }
+            InputExpr::Lit(lit) => values.push(interp::literal_value(lit)),
             // Read at the point the pipe runs, like any other data access.
-            //
             // This is the first pipe, before any binding exists, so a `[key]`
-            // here has nothing to resolve against — the environment is empty.
-            // A dynamic key is for later pipes, once the parameter it reads is
-            // in scope.
-            lang::ast::InputExpr::Data(r) => {
-                match crate::data::read_field(r, &lang::interp::Env::new()) {
-                    Ok(v)  => values.push(v),
-                    Err(e) => fail(&format!("{}: {}", path, e)),
-                }
-            }
-            lang::ast::InputExpr::Var(_) => {
+            // here has nothing to resolve against — a dynamic key is for
+            // later pipes, once the parameter it reads is in scope.
+            InputExpr::Data(r) => values.push(crate::data::read_field(r, &Env::new())?),
+            InputExpr::Var(_) => {
                 let text = next_arg.next().expect("counts checked above");
-                match Value::parse_as(text, input.ty) {
-                    Ok(v)  => values.push(v),
-                    Err(e) => fail(&format!("{}: argument {}", path, e)),
-                }
+                values.push(Value::parse_as(text, input.ty)
+                    .map_err(|e| format!("argument {}", e))?);
             }
         }
     }
 
-    let mut env: Env = match interp::seed_params(&program, &values) {
-        Ok(e) => e,
-        Err(e) => fail(&format!("{}: {}", path, e)),
-    };
-
-    let result = match interp::run_first_and_rest(&program, &values, &mut env, 0) {
-        Ok(r) => r,
-        Err(e) => {
-            lang::builtins::close_all_fds();
-            fail(&format!("{}: {}", path, e));
-        }
-    };
-
-    lang::builtins::close_all_fds();
-
-    match result {
-        Some(v) => println!("Script executed. Returned value: {}", v),
-        None    => println!("Script executed. No returned value."),
-    }
-}
-
-fn fail(msg: &str) -> ! {
-    eprintln!("{}", msg);
-    lang::builtins::close_all_fds();
-    process::exit(1);
+    let mut env: Env = interp::seed_params(&program, &values).map_err(|e| e.to_string())?;
+    interp::run_first_and_rest(&program, &values, &mut env, 0).map_err(|e| e.to_string())
 }

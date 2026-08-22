@@ -412,7 +412,7 @@ fn run_line(line: &str, env: &mut Env) -> bool {
     let scope: HashMap<String, BsType> = env.iter()
         .map(|(k, v)| (k.clone(), v.ty()))
         .collect();
-    if let Err(e) = lang::check::check_program(&program, &scope, &|n| bag::signature(n)) {
+    if let Err(e) = lang::check_with_bag(&program, &scope) {
         eprintln!("  {}", e);
         return false;
     }

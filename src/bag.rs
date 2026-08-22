@@ -82,7 +82,7 @@ pub fn program(name: &str) -> Result<Program, String> {
 /// pipe's binding type. Used by the static pass to check `bag::` calls.
 pub fn signature(name: &str) -> Result<Signature, String> {
     let pipes = program(name)?;
-    crate::lang::check::check_program(&pipes, &HashMap::new(), &|inner| signature(inner))
+    crate::lang::check_with_bag(&pipes, &HashMap::new())
         .map_err(|e| format!("bag entry '{}' does not type check: {}", name, e))
 }
 
@@ -115,7 +115,7 @@ pub fn add(path: &str, name: &str) -> Result<bool, String> {
     if pipes.is_empty() {
         return Err(format!("'{}' contains no pipes — there is nothing to save", path));
     }
-    crate::lang::check::check_program(&pipes, &HashMap::new(), &|inner| signature(inner))
+    crate::lang::check_with_bag(&pipes, &HashMap::new())
         .map_err(|e| format!(
             "error: invalid BullScript syntax in the script you tried to save\n  {}\n  {}",
             path, e

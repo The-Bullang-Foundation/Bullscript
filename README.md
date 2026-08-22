@@ -44,8 +44,10 @@ Runs a `.busc` file non-interactively. The script's first pipe declares
 its parameters: each **named** slot takes one argument from the command
 line, parsed into the slot's declared type, and a mismatch is reported
 before anything runs. A literal slot is a value the script already holds,
-so it takes nothing. When the script finishes, its return value is
-printed.
+so it takes nothing. When the script finishes, its return value — the
+last pipe's binding — is printed on its own line, so `$(bullscript
+x.busc)` is that value; a script that ends in `-> {}` prints nothing of
+its own.
 
 ```bash
 bullscript lsp
