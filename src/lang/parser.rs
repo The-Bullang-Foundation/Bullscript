@@ -5,10 +5,11 @@
 //!   program     := pipe*
 //!   pipe        := "(" input_list? ")" ":" pipe_val "->" binding ";"
 //!   input_list  := input ("," input)*
-//!   input       := (literal | ident) ":" type
+//!   input       := (literal | ident | data_ref) ":" type
 //!   pipe_val    := call | expr
 //!   call        := ("builtin" | "bag" | "bin") "::" ident
-//!   binding     := "{" "}" | "{" ident ":" type "}"
+//!   binding     := "{" "}" | "{" (ident | data_ref) ":" type "}"
+//!   data_ref    := "data" "::" ident ("." ident | "[" ident "]")+
 //!
 //!   expr        := logic_or
 //!   logic_or    := logic_and ("||" logic_and)*

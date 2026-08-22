@@ -111,10 +111,9 @@ Directives (typed bare, not prefixed with anything):
       Read every .busc file in the .zip at <path> into your bag, named
       after each file. An entry whose name already exists is replaced.
 
-      Imported scripts are taken as they are: they are not parsed or
-      type checked on the way in, the same as any file you point
-      bag::add at. Import an archive you are willing to run — an
-      incoherent script fails when you call it, not before.
+      A file that does not parse is skipped. The rest are taken as they
+      are, without a type check: import an archive you are willing to
+      run — an incoherent script fails when you call it, not before.
 
   record::start
       Start capturing every pipe you type, until record::end. Only
@@ -131,9 +130,10 @@ Directives (typed bare, not prefixed with anything):
 Calling a bag entry from a pipe: bag::<name>
   e.g.  (4: i64) : bag::double -> {r: i64};
 
-The first pipe of a script declares its parameters — every slot in that
-list takes an argument, whether it holds a name or a literal. The last
-pipe's binding is the script's return value.
+The first pipe of a script declares its parameters. Called as a bag
+entry, every slot in that list takes an argument, whether it holds a
+name or a literal. The last pipe's binding is the script's return value.
 
 Running a script from the shell:
-  bullscript path/to/script.busc [arguments...]"#;
+  bullscript path/to/script.busc [arguments...]
+Here only the named slots take an argument; a literal keeps its value."#;

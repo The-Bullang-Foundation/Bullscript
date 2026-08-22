@@ -40,9 +40,20 @@ Drops straight into the interactive prompt. This *is* the whole program.
 bullscript path/to/script.busc [arguments...]
 ```
 
-Runs a `.busc` file non-interactively. Arguments are parsed into the types
-the script's first pipe declares; a mismatch is reported before anything
-runs. When the script finishes, its return value is printed.
+Runs a `.busc` file non-interactively. The script's first pipe declares
+its parameters: each **named** slot takes one argument from the command
+line, parsed into the slot's declared type, and a mismatch is reported
+before anything runs. A literal slot is a value the script already holds,
+so it takes nothing. When the script finishes, its return value is
+printed.
+
+```bash
+bullscript lsp
+```
+
+Runs the language server on stdin/stdout, for the editor extensions in
+`bullscript-vscode/` and `zed-bullscript/`. It reports the same errors the
+prompt would, and offers the same completions.
 
 ```bash
 bullscript --help
@@ -63,12 +74,16 @@ prompt — is nothing but a sequence of pipes:
 - **Every input and every created binding always carries an explicit
   type.** There's no inference and no `let` — this is deliberate, for
   readability and to catch mismatches early.
-- The middle section is either a call (`builtin::name` or `bag::name`,
-  taking the pipe's inputs as its arguments, in order) or a bare
-  arithmetic/comparison/logical expression over the pipe's own inputs
-  (`+ - * /`, `== != < > <= >=`, `&& ||`, unary `-`/`!`, parens).
+- An input is a literal, a binding already in scope, or a field of a
+  stored document (`data::entry.field`, see below).
+- The middle section is either a call (`builtin::name`, `bag::name` or
+  `bin::name`, taking the pipe's inputs as its arguments, in order) or a
+  bare arithmetic/comparison/logical expression over the pipe's own
+  inputs (`+ - * /`, `== != < > <= >=`, `&& ||`, unary `-`/`!`, parens).
+  An expression may leave inputs unused.
 - `-> {}` discards the result. `-> {name: type}` creates or overwrites
-  `name` with the computed value.
+  `name` with the computed value. `-> {data::entry.field: type}` writes it
+  into a stored document instead.
 - Exactly four types: `i64`, `f64`, `bool`, `String`. No tuples, no
   arrays, no other widths — this is what lets a bare literal be
   unambiguous without a prototype in scope.
@@ -137,10 +152,11 @@ A `.busc` file *is* a sequence of pipes and nothing else:
 - The **first pipe's** input list is the script's parameter list.
 - The **last pipe's** binding is the script's return value.
 
-Every slot in that first list is a parameter, whether it holds a name or a
-literal — the caller supplies a value for each one. A named slot also binds
-its value for later pipes to use; a literal slot has no name, so its value
-is used by the first pipe and not bound.
+When a script is called from a pipe as a bag entry, every slot in that
+first list is a parameter, whether it holds a name or a literal — the
+caller fills each one. A named slot also binds its value for later pipes to
+use; a literal slot has no name, so its value is used by the first pipe and
+not bound.
 
 ```
 (4: i64, x: i64) : builtin::add -> {r: i64};
@@ -148,13 +164,17 @@ is used by the first pipe and not bound.
 
 Two slots, so two arguments: `(4: i64, 10: i64) : bag::addfour -> {r: i64};`
 
+From the command line there is no caller, so only the named slots are
+parameters; a literal slot keeps the value the script wrote. The same
+script run directly takes one argument: `bullscript addfour.busc 10`.
+
 `.busc` scripts are **interpreted every run**, not compiled — the same
 tree-walking evaluator BullScript needs for its own prompt is reused to run
 a file or a bag call. No build step, no stored binary.
 
-Every callable — builtin or bag entry — needs a declared prototype; there
-is no path to registering an arbitrary pre-built binary as a callable name.
-The bag stores only `.busc` files.
+Every callable — builtin or bag entry — needs a declared prototype. The
+bag stores only `.busc` files; a pre-built program goes in the bin store,
+which gives it a fixed prototype of its own (below).
 
 ### How the bag stores things
 
@@ -173,17 +193,102 @@ that cache, so the bag is always current without restarting the prompt.
 Entry names must be identifiers: a letter or underscore, then letters,
 digits or underscores.
 
+---
+
+## Builtins
+
+Builtins live in a small, fixed, hardcoded table — never stored in
+`bag.json`, never removable via `bag::remove`.
+
+| Builtin | Signature | Notes |
+|---|---|---|
+| `builtin::add` | `(i64, i64) -> i64` | overflow is an error |
+| `builtin::to_upper` / `to_lower` / `trim` | `(String) -> String` | |
+| `builtin::i64_to_str` | `(i64) -> String` | |
+| `builtin::str_to_i64` | `(String) -> i64` | `0` when the text is not a number, not an error |
+| `builtin::out` | `(i64, String) -> bool` | writes verbatim; bool reports success |
+| `builtin::in` | `(i64) -> String` | one line, without its newline; empty at end of input |
+| `builtin::open` | `(String, String) -> i64` | modes `r` `w` `a` `rw`; failure is an error |
+| `builtin::close` | `(i64) -> bool` | false if it wasn't open; 0/1/2 rejected |
+| `builtin::run` | `(String) -> bool` | runs a shell command, returns success/failure, discards output |
+| `builtin::capture` | `(String) -> String` | runs a shell command, returns stdout, no status info |
+
+`run` and `capture` are separate builtins rather than one: with no tuple
+type, a single call can only bind one typed value, so status and output
+can't come back from the same call.
+
+---
+
+## The data store
+
+`data::add` stores a `.json` file the same way the bag stores a script:
+parsed up front (it must be a JSON object), copied into
+`~/.bullscript/data/`, cached in memory and refreshed by every `data::`
+directive.
+
+A pipe reads a field of a document as an input, and writes one as a
+binding:
+
+```
+(1: i64, data::prompt.audit: String) : builtin::out -> {};
+("new text": String) : builtin::trim -> {data::prompt.audit: String};
+```
+
+A field keeps the type it has in the document — a JSON string is a
+`String`, an integral number an `i64`, a number with a fraction an `f64`, a
+boolean a `bool` — and the declared type must match. Nested fields chain
+with dots, and `data::entry[name]` selects a field by the `String` a
+binding holds at run time. A field must already exist: reading or writing a
+missing one is an error, and a write takes effect when its pipe runs, like
+`builtin::out`.
+
+---
+
+## The bin store
+
+`bin::add <path> <name>` copies an already-built program into
+`~/.bullscript/bin/` — a compiled binary, or a script with a shebang line.
+Building it is yours to do; BullScript keeps only the result. It is then
+callable from any pipe:
+
+```
+("--check": String) : bin::mytool -> {code: i64};
+```
+
+Every program has the same prototype: any number of `String` arguments,
+passed as separate argv entries and never through a shell, and its exit
+code back as an `i64`. The program inherits the terminal, so it prints
+where you can see it and can read input.
+
+There is deliberately no `bin::export` or `bin::import`: a compiled program
+is tied to one operating system and one architecture, so an archive of
+binaries handed to someone else would largely not run.
+
+---
+
+## The prompt
+
 ### Directives (typed bare at the prompt)
 
 | Directive | Effect |
 |---|---|
 | `help` | Print the in-prompt help. |
+| `clear` | Clear the screen. Bindings, stores and history are untouched. |
+| `exit` | Quit. Ctrl+D also works; either discards an in-progress recording with a warning. |
+| `record::start` | Start capturing the pipes you type. |
+| `record::end` | Stop, preview, and optionally save the recording as a new bag entry. |
 | `bag::add <path> <name>` | Parse, check and store a `.busc` file under `<name>`. |
 | `bag::remove <name>` | Remove a single bag entry. |
 | `bag::list` | List your bag entries — builtins never appear here. |
-| `record::start` | Start capturing the pipes you type. |
-| `record::end` | Stop, preview, and optionally save the recording as a new bag entry. |
-| `exit` | Quit. Ctrl+D also works; either discards an in-progress recording with a warning. |
+| `bag::export <path>` | Write every script in the bag into one `.zip`. A directory gets `bullscript-bag.zip` inside it. |
+| `bag::import <path>` | Read every `.busc` in a `.zip` into the bag, named after each file. Existing names are replaced; a file that does not parse is skipped. |
+| `data::add <path> <name>` | Parse and store a `.json` object under `<name>`. |
+| `data::remove <name>` | Remove a single document. |
+| `data::list` | List your documents. |
+| `data::export <path>` / `data::import <path>` | As for the bag, with `.json` files and `bullscript-data.zip`. |
+| `bin::add <path> <name>` | Copy a built program into the bin store under `<name>`. |
+| `bin::remove <name>` | Remove a single program. |
+| `bin::list` | List your programs. |
 
 Only lines that parsed, checked and ran successfully are captured by a
 recording — a failed line never ends up in a saved script.
@@ -199,37 +304,32 @@ document after its dot, types after a `:`, and your bindings. When only one
 thing fits, or every candidate shares a longer prefix, the rest is shown
 dimmed after the cursor; the right arrow accepts it.
 
-### Builtins
-
-Builtins live in a small, fixed, hardcoded table — never stored in
-`bag.json`, never removable via `bag::remove`.
-
-| Builtin | Signature | Notes |
-|---|---|---|
-| `builtin::add` | `(i64, i64) -> i64` | overflow is an error |
-| `builtin::to_upper` / `to_lower` / `trim` | `(String) -> String` | |
-| `builtin::out` | `(i64, String) -> bool` | writes verbatim; bool reports success |
-| `builtin::in` | `(i64) -> String` | one line, without its newline; empty at end of input |
-| `builtin::open` | `(String, String) -> i64` | modes `r` `w` `a` `rw`; failure is an error |
-| `builtin::close` | `(i64) -> bool` | false if it wasn't open; 0/1/2 rejected |
-| `builtin::run` | `(String) -> bool` | runs a shell command, returns success/failure, discards output |
-| `builtin::capture` | `(String) -> String` | runs a shell command, returns stdout, no status info |
-
-`run` and `capture` are separate builtins rather than one: with no tuple
-type, a single call can only bind one typed value, so status and output
-can't come back from the same call.
-
 ---
 
 ## Example
 
+`write_notes.busc`:
+
 ```
-("notes.txt": String, "w": String)    : builtin::open  -> {fd: i64};
-(fd: i64, "first line\n": String)     : builtin::out   -> {ok: bool};
-(fd: i64)                             : builtin::close -> {done: bool};
+(path: String, line: String)  : path           -> {p: String};
+(p: String, "w": String)      : builtin::open  -> {fd: i64};
+(fd: i64, line: String)       : builtin::out   -> {ok: bool};
+(fd: i64)                     : builtin::close -> {done: bool};
 ```
 
+The first pipe declares the script's two parameters. `builtin::open` only
+takes a path and a mode, and the mode is the script's own business, so the
+parameters are declared in an expression pipe — which may carry inputs it
+does not use — and `open` gets its literal `"w"` on the next line.
+
 ```bash
-bullscript write_notes.busc notes.txt w "first line
-" 
+bullscript write_notes.busc notes.txt "first line
+"
+```
+
+Stored in the bag, the same script is called with its literal slots filled
+too, since the caller is another pipe:
+
+```
+(path: String, line: String) : bag::write_notes -> {done: bool};
 ```
