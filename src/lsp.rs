@@ -1,15 +1,18 @@
 //! `bullscript lsp` — a language server for `.busc` files.
 //!
 //! What it does is deliberately narrow: it tells you where a pipe is wrong,
-//! while you type. A missing semicolon, an unknown builtin, a binding whose
-//! declared type does not match what the pipe produces — each becomes a red
-//! underline on the line that caused it.
+//! while you type, and what could come next at the cursor. A missing
+//! semicolon, an unknown builtin, a binding whose declared type does not
+//! match what the pipe produces — each becomes a red underline on the line
+//! that caused it. Completion offers the same names the prompt does.
 //!
 //! It can do that because BullScript already lexes, parses and type checks
-//! every program before running a single pipe. The server adds no analysis of
-//! its own; it runs the same three passes the interpreter does and reports
-//! what they say. That is the point: the squiggle in the editor and the error
-//! at the prompt can never disagree, because they come from the same code.
+//! every program before running a single pipe, and the prompt already knows
+//! what fits at a cursor. The server adds no analysis of its own; it runs
+//! the same passes the interpreter does and reports what they say. That is
+//! the point: the squiggle in the editor and the error at the prompt can
+//! never disagree, and neither can their completions, because they come
+//! from the same code.
 //!
 //! Structure follows `bullarchy`'s server, including two things learned there:
 //!
@@ -25,6 +28,7 @@ use std::io::{self, BufRead, Write};
 use std::sync::mpsc;
 use std::time::Duration;
 
+use crate::complete::{self, Completion};
 use crate::lang;
 
 /// How long the buffer must be quiet before it is re-checked.
@@ -130,7 +134,7 @@ fn handle(
             send(
                 writer,
                 &format!(
-                    r#"{{"jsonrpc":"2.0","id":{id},"result":{{"capabilities":{{"textDocumentSync":1}},"serverInfo":{{"name":"bullscript","version":"{}"}}}}}}"#,
+                    r#"{{"jsonrpc":"2.0","id":{id},"result":{{"capabilities":{{"textDocumentSync":1,"completionProvider":{{"triggerCharacters":[":","."]}}}},"serverInfo":{{"name":"bullscript","version":"{}"}}}}}}"#,
                     env!("CARGO_PKG_VERSION")
                 ),
             );
@@ -150,6 +154,11 @@ fn handle(
                 docs.insert(uri.clone(), text);
             }
             return Some(uri);
+        }
+        "textDocument/completion" => {
+            let id = msg.id.unwrap_or_else(|| "null".to_string());
+            let items = completion_items(&msg.params, docs);
+            send(writer, &format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{items}}}"#));
         }
         "textDocument/didClose" => {
             let uri = json_str(&msg.params, "uri")?;
@@ -234,11 +243,129 @@ fn check(source: &str, uri: &str) -> String {
     )
 }
 
+// ── Completion ────────────────────────────────────────────────────────────
+
+/// The completion items for a request, as a JSON array.
+///
+/// The request names a document and a position; the document comes from the
+/// buffer kept by didChange, never from disk, for the same reason diagnostics
+/// do. The position's `character` counts UTF-16 code units, as the protocol
+/// requires, and is converted to a byte offset in the line before anything
+/// looks at the text.
+fn completion_items(params: &str, docs: &HashMap<String, String>) -> String {
+    let Some(uri) = json_str(params, "uri") else { return "[]".to_string() };
+    let Some(source) = docs.get(&uri) else { return "[]".to_string() };
+    let Some((line_no, character)) = position(params) else { return "[]".to_string() };
+    let Some(line) = source.lines().nth(line_no) else { return "[]".to_string() };
+    let cursor = utf16_to_byte(line, character);
+
+    let bindings = bindings_before(source, line_no);
+    let Completion::Words { start, candidates } =
+        complete::complete(&line[..cursor], &bindings, false)
+    else {
+        return "[]".to_string();
+    };
+
+    // Each item replaces exactly the partial word the engine found, so a
+    // tail completed after `bag::` or `entry.` lands where the engine
+    // meant it to, whatever the editor considers a word.
+    let start_ch = byte_to_utf16(line, start);
+    let items: Vec<String> = candidates.iter().map(|c| {
+        let detail = match &c.detail {
+            Some(d) => format!(r#","detail":"{}""#, json_escape(d)),
+            None    => String::new(),
+        };
+        format!(
+            r#"{{"label":"{label}"{detail},"kind":{kind},"textEdit":{{"range":{{"start":{{"line":{line_no},"character":{start_ch}}},"end":{{"line":{line_no},"character":{character}}}}},"newText":"{label}"}}}}"#,
+            label = json_escape(&c.label),
+            kind  = completion_kind(&c.label, c.detail.as_deref()),
+        )
+    }).collect();
+    format!("[{}]", items.join(","))
+}
+
+/// The `CompletionItemKind` an editor uses to pick an icon.
+///
+/// The engine does not say what kind of thing a candidate is; its label and
+/// detail do. A namespace ends in `::`, a callable's detail is a signature,
+/// a document's label ends in `.`, and a field or binding has a type. What
+/// is left — directives, types — is shown as a keyword.
+fn completion_kind(label: &str, detail: Option<&str>) -> u8 {
+    const FUNCTION: u8 = 3;
+    const FIELD:    u8 = 5;
+    const MODULE:   u8 = 9;
+    const KEYWORD:  u8 = 14;
+    const FILE:     u8 = 17;
+    if label.ends_with("::") {
+        return MODULE;
+    }
+    match detail {
+        Some(d) if d.starts_with('(') => FUNCTION,
+        Some(_) if label.ends_with('.') => FILE,
+        Some(_) => FIELD,
+        None    => KEYWORD,
+    }
+}
+
+/// Bindings as `(name, type)` from every `-> {name: type}` on the lines
+/// before `line_no`.
+///
+/// Read textually rather than by parsing: the file is being edited, so the
+/// lines above the cursor may not parse, and a binding on a line that does
+/// not yet end in `;` is still a binding the next line will want.
+fn bindings_before(source: &str, line_no: usize) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for line in source.lines().take(line_no) {
+        let Some((_, after)) = line.split_once("->") else { continue };
+        let Some(inner) = after.trim_start().strip_prefix('{') else { continue };
+        let Some((inner, _)) = inner.split_once('}') else { continue };
+        let Some((name, ty)) = inner.split_once(':') else { continue };
+        let (name, ty) = (name.trim(), ty.trim());
+        if name.is_empty() || ty.is_empty() || name.starts_with("data::") {
+            continue;
+        }
+        out.retain(|(n, _)| n != name);
+        out.push((name.to_string(), ty.to_string()));
+    }
+    out.sort();
+    out
+}
+
+/// The `position` of a completion request: `(line, character)`.
+fn position(params: &str) -> Option<(usize, usize)> {
+    let pat = "\"position\":";
+    let start = params.find(pat)? + pat.len();
+    let rest = &params[start..];
+    let end = rest.find('}')?;
+    let obj = &rest[..=end];
+    let num = |key: &str| -> Option<usize> {
+        json_raw(obj, key)?.parse().ok()
+    };
+    Some((num("line")?, num("character")?))
+}
+
+fn utf16_to_byte(line: &str, character: usize) -> usize {
+    let mut units = 0;
+    for (i, c) in line.char_indices() {
+        if units >= character {
+            return i;
+        }
+        units += c.len_utf16();
+    }
+    line.len()
+}
+
+fn byte_to_utf16(line: &str, byte: usize) -> usize {
+    line[..byte.min(line.len())].chars().map(char::len_utf16).sum()
+}
+
 // ── Minimal JSON reading ──────────────────────────────────────────────────
 //
-// Enough to pull three fields out of a request. BullScript has no JSON
-// dependency and this does not justify adding one: the server reads `method`,
-// `id`, `uri` and `text`, and writes messages it builds itself.
+// Enough to pull a handful of fields out of a request. serde_json is in the
+// tree for the data store, but the messages read here are flat enough that
+// a dependency on its types would add more than it removes: the server reads
+// `method`, `id`, `uri`, `text` and `position`, and writes messages it builds
+// itself.
 
 /// The string value of `"key": "..."`, unescaped.
 fn json_str(body: &str, key: &str) -> Option<String> {
