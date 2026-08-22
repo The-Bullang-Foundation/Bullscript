@@ -142,29 +142,14 @@ fn handle_line(
     // handed to someone else would largely not run.
 
     if line == "bin::add" || line.starts_with("bin::add ") {
-        let rest = line["bin::add".len()..].trim();
-        // The build command is everything after the name, quoting and all, so
-        // it is split off by position rather than by whitespace.
-        let mut parts = rest.splitn(3, char::is_whitespace);
-        match (parts.next(), parts.next(), parts.next()) {
-            (Some(path), Some(name), Some(build))
-                if !path.is_empty() && !name.is_empty() && !build.trim().is_empty() =>
-            {
-                // The build command is everything after the name, so quoting
-                // it is unnecessary — but it reads like a shell argument, so
-                // people quote it anyway. One layer of matching quotes is
-                // stripped; without this, `sh -c` is handed the quotes too and
-                // looks for a command whose name is the whole line.
-                let build = strip_quotes(build.trim());
-                match bin_store::add(path, name, build) {
-                    Ok(true)  => println!("  Added '{}' to your programs (replaced an existing one).", name),
-                    Ok(false) => println!("  Added '{}' to your programs.", name),
-                    Err(e)    => eprintln!("  {}", e),
-                }
-            }
-            _ => {
-                eprintln!("  Usage: bin::add <path> <name> <build command>");
-                eprintln!("         The build runs in <path> and must leave a file named <name>.");
+        let rest: Vec<&str> = line["bin::add".len()..].split_whitespace().collect();
+        if rest.len() != 2 {
+            eprintln!("  Usage: bin::add <path/to/program> <n>");
+        } else {
+            match bin_store::add(rest[0], rest[1]) {
+                Ok(true)  => println!("  Added '{}' to your programs (replaced an existing one).", rest[1]),
+                Ok(false) => println!("  Added '{}' to your programs.", rest[1]),
+                Err(e)    => eprintln!("  {}", e),
             }
         }
         return false;
@@ -386,16 +371,4 @@ fn print_bag_list() {
             }
         }
     }
-}
-
-/// Remove one layer of matching surrounding quotes, if there is one.
-fn strip_quotes(s: &str) -> &str {
-    let bytes = s.as_bytes();
-    if bytes.len() >= 2 {
-        let first = bytes[0];
-        if (first == b'"' || first == b'\'') && bytes[bytes.len() - 1] == first {
-            return &s[1..s.len() - 1];
-        }
-    }
-    s
 }

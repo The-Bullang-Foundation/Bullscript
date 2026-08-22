@@ -4,9 +4,11 @@
 //! call, `data` holds documents you read fields out of, and this holds
 //! programs you run.
 //!
-//! `bin::add <path> <name> <build command>` runs the build command in `path`,
-//! then copies the file it left named `<name>` into the store. From then on the
-//! program is reachable by that name from any pipe:
+//! `bin::add <path> <name>` copies an already-built program at `path` into
+//! the store under `name`, exactly as `bag::add` does for a script. Building
+//! the program is your job, with whatever toolchain it needs; the store only
+//! keeps the result. From then on the program is reachable by that name from
+//! any pipe:
 //!
 //! ```text
 //! ("--check": String) : bin::mytool -> {code: i64};
@@ -52,7 +54,7 @@ pub fn files_dir() -> Result<PathBuf, String> {
 
 /// Program names must be BullScript identifiers.
 ///
-/// This is what stops `bin::add . ../../bin/sh "true"` from writing outside
+/// This is what stops `bin::add ./tool ../../bin/sh` from writing outside
 /// the store, and it also rules out names that could never be typed back as
 /// `bin::my program`.
 pub fn validate_name(name: &str) -> Result<(), String> {
@@ -115,57 +117,27 @@ fn save(map: &BTreeMap<String, String>) -> Result<(), String> {
 
 // ── Registry operations ───────────────────────────────────────────────────
 
-/// Build a program and store it under `name`.
+/// Store the program at `path` under `name`.
 ///
-/// `path` is where the build runs — a directory, or a file whose directory is
-/// used. The build must leave a file named exactly `name` there; that file is
-/// what gets stored. Naming the artifact rather than hunting for it is the
-/// whole convention: a build leaves object files and sometimes libraries
-/// behind, and every one of them looks like a binary from the outside.
-pub fn add(path: &str, name: &str, build: &str) -> Result<bool, String> {
+/// `path` must be an existing file — the built program, not the project it
+/// came from. Any file will do: a compiled binary, or a script with a
+/// shebang line. It is copied, so the original can be rebuilt or deleted
+/// afterwards without affecting the stored copy.
+pub fn add(path: &str, name: &str) -> Result<bool, String> {
     validate_name(name)?;
 
     let given = Path::new(path);
     if !given.exists() {
         return Err(format!("'{}' does not exist", path));
     }
-    let dir = if given.is_dir() {
-        given.to_path_buf()
-    } else {
-        // A file was given: build where it lives.
-        given.parent().unwrap_or(Path::new(".")).to_path_buf()
-    };
-
-    println!("  building in {} ...", dir.display());
-    let (program, flag) = if cfg!(windows) { ("cmd", "/C") } else { ("sh", "-c") };
-    // The build inherits the terminal, so its output and its errors are the
-    // user's to read — a failing compile is only useful if you can see it.
-    let status = Command::new(program)
-        .arg(flag)
-        .arg(build)
-        .current_dir(&dir)
-        .status()
-        .map_err(|e| format!("could not run the build command: {}", e))?;
-    crate::lang::builtins::mark_terminal_dirty();
-
-    if !status.success() {
-        return Err(match status.code() {
-            Some(c) => format!("the build command exited with status {} — nothing was stored", c),
-            None    => "the build command was killed — nothing was stored".to_string(),
-        });
-    }
-
-    let artifact = dir.join(name);
-    if !artifact.is_file() {
+    if !given.is_file() {
         return Err(format!(
-            "the build finished but left no file named '{}' in {}.\n  \
-             A program is stored under the name you give it, so the build must \
-             produce that name — for example `-o {}`.",
-            name, dir.display(), name
+            "'{}' is not a file — give the path to the built program itself, \
+             not the directory it is in", path
         ));
     }
 
-    store(&artifact, name)
+    store(given, name)
 }
 
 /// Copy an already-built program into the store under `name`.

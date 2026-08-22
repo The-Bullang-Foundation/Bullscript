@@ -74,10 +74,12 @@ Directives (typed bare, not prefixed with anything):
         ("new text": String) : builtin::trim -> {data::prompt.audit: String};
       A field keeps the type it has in the document, and must already exist.
 
-  bin::add <path> <n> <build command>
-      Run the build command in <path>, then store the file it leaves named
-      <n> as a program. Call it from a pipe with bin::<n>: it takes any
-      number of String arguments and gives back its exit code.
+  bin::add <path> <n>
+      Copy the program at <path> into your programs under <n>. Build it
+      first, with whatever toolchain it needs; any file that runs will do,
+      a compiled binary or a script with a shebang. Call it from a pipe
+      with bin::<n>: it takes any number of String arguments and gives
+      back its exit code.
 
         ("--check": String) : bin::mytool -> {code: i64};
 
